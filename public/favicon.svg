@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- A hotspot on a muted ground: the density surface is what the atlas is for.
+       Drawn as shapes rather than a glyph, so it needs no font to render. -->
+  <rect width="32" height="32" rx="6" fill="#f2f0ed"/>
+  <circle cx="16" cy="16" r="10" fill="#c2703a" opacity=".18"/>
+  <circle cx="16" cy="16" r="6.5" fill="#c2703a" opacity=".34"/>
+  <circle cx="16" cy="16" r="3.2" fill="#c2703a"/>
+</svg>

@@ -1,0 +1,30 @@
+node_modules/
+dist/
+.DS_Store
+*.log
+
+# Cached basemap, ~7 MB of Esri canvas tiles. Derived, not source: `npm run tiles`
+# rebuilds it, and the app degrades to a flat background without it.
+public/tiles/
+
+# The generated payload — ~75 MB across 515 files, rebuilt by `npm run data` in
+# under three minutes. Not committed: Git LFS is no escape hatch either, because
+# Pages serves LFS pointer files rather than their contents.
+public/data/meta.json
+public/data/areas.json
+public/data/index.json
+public/data/agg/
+public/data/kde/
+
+# public/data/geo/ and public/data/i18n/ ARE committed. Nothing generates them —
+# the boundaries and the translations are hand-authored inputs that happen to
+# live where the app fetches them.
+
+# The two large input tables, 39 MB between them. Both are derived — the
+# datasets/prepare_data.R pipeline writes them out of the voter roll — so
+# committing them would grow history by that much on every refresh without
+# making the repository any more reproducible. The small inputs stay: areas,
+# precincts and the (empty) book file define the geography and are worth
+# reading in a diff.
+data/input/voters_surname_precinct.csv
+data/input/surnames_meta.csv

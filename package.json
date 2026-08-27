@@ -1,0 +1,26 @@
+{
+  "name": "gvarebi",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Georgian Surname Atlas \u2014 prototype",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview --port 4173",
+    "data": "Rscript build/build.R --in data/input --out public/data",
+    "tiles": "node tools/fetch-tiles.mjs",
+    "check": "node tools/check-data.mjs",
+    "fonts": "node tools/fetch-fonts.mjs",
+    "inspect": "node tools/inspect.mjs",
+    "deploy": "node tools/deploy.mjs"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^7.3.0",
+    "svelte": "^5.56.10",
+    "vite": "^8.2.2"
+  },
+  "dependencies": {
+    "maplibre-gl": "^6.6.0"
+  }
+}

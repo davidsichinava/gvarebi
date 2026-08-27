@@ -1,0 +1,81 @@
+# NOT the normal way this site ships. Deployment is `npm run deploy`, which
+# builds locally and force-pushes dist/ to gh-pages as a single orphan commit —
+# see the README. This workflow is the alternative: build everything in CI.
+#
+# It cannot run as written, because data/input/voters_surname_precinct.csv and
+# surnames_meta.csv are gitignored (39 MB between them) and so are absent from a
+# checkout. To use it, either commit those two files, or add a step that pulls
+# them from a Release asset before the R build. Left here, manual-only, because
+# the R pipeline setup is the fiddly part and worth keeping.
+name: Deploy to GitHub Pages (CI build — manual, needs source data)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # Rebuild the payload from the input CSVs. Drop this step if you commit
+      # public/data and build it locally instead — but then never commit the
+      # source extracts alongside it.
+      - uses: r-lib/actions/setup-r@v2
+        with: { r-version: release }
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with: { packages: 'data.table jsonlite digest' }
+      - name: Build the data payload
+        run: Rscript build/build.R --in data/input --out public/data
+
+      - name: Validate the payload
+        run: npm run check
+
+      # public/tiles is gitignored, so a checkout has no basemap. Without this
+      # the site still deploys and every table and control still works — the map
+      # just falls back to a flat background, which is easy to miss in review.
+      # Cached between runs so this costs one fetch, not one per deploy.
+      - name: Cache the basemap tiles
+        uses: actions/cache@v4
+        with:
+          path: public/tiles
+          key: tiles-esri-z11-v1
+      - name: Fetch any missing basemap tiles
+        run: npm run tiles
+
+      - name: Build the site
+        # A project site is served from /<repo>/. Delete this line if you use a
+        # custom domain or a <user>.github.io repository.
+        env:
+          BASE_PATH: /${{ github.event.repository.name }}/
+        run: npm run build
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
