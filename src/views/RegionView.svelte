@@ -1,8 +1,9 @@
 <script>
   import { nav, go } from '../lib/state.svelte.js'
   import { t, name as areaName } from '../lib/i18n.svelte.js'
-  import { getAggBucket } from '../lib/data.js'
-  import { areaProfile, suffixMix } from '../lib/metrics.js'
+  import { getProfiles, getSuffix } from '../lib/data.js'
+  import { suffixMix, rate } from '../lib/metrics.js'
+  import { familyLabel, familyLabelFull } from '../lib/suffix.js'
   import { num, pct, times } from '../lib/format.js'
   import { SEQ } from '../lib/colors.js'
   import MapView from '../components/MapView.svelte'
@@ -14,26 +15,51 @@
   let list = $derived(areas[geo] ?? [])
   let area = $derived(list.find((a) => a.id === nav.b) ?? list[0])
 
-  // Every bucket that holds at least one surname — at real scale this would be
-  // a precomputed per-area file instead of a fan-out over buckets.
-  let buckets = $state(null)
+  // The per-area rankings are precomputed — build.R writes them once instead of
+  // the front end fetching all 256 agg buckets and walking 69,290 surnames on
+  // every visit. The comment that used to sit here said this was what should
+  // happen at real scale; at real scale it had to.
+  let profiles = $state(null)
   $effect(() => {
-    const need = [...new Set(index.list.map((s) => s.bucket))]
-    Promise.all(need.map((b) => getAggBucket(b).then((d) => [b, d]))).then((pairs) => {
-      buckets = Object.fromEntries(pairs)
-    })
+    const want = geo
+    profiles = null
+    getProfiles(want).then((p) => { if (geo === want) profiles = p })
   })
 
-  let profile = $derived(
-    buckets && area ? areaProfile({ buckets, index, area, geo, meta }) : null
+  let suffixData = $state(null)
+  $effect(() => { getSuffix().then((d) => (suffixData = d)) })
+
+  let profile = $derived.by(() => {
+    const raw = profiles && area ? profiles[area.id] : null
+    if (!raw) return null
+    const hydrate = ([ka, count, quotient]) => {
+      const entry = index.byKa.get(ka)
+      return entry ? { entry, count, rate: rate(count, area.voters), lq: quotient ?? null, before: null } : null
+    }
+    return {
+      common: (raw.common ?? []).map(hydrate).filter(Boolean),
+      distinctive: (raw.distinctive ?? []).map(hydrate).filter(Boolean),
+      distinct: raw.distinct ?? 0,
+    }
+  })
+
+  // From the precomputed family tallies, not from the top-25 rankings: a mix
+  // derived from the head of the list is not the mix of the area.
+  // Every family, not a top-six with the rest lumped into "other" — the chart is
+  // a list of bars now, so it has room for all of them.
+  let mix = $derived(
+    suffixData && area ? suffixMix(suffixData[geo]?.[area.id], suffixData.national, 99) : []
   )
-  let mix = $derived(profile ? suffixMix(profile.common, index) : [])
   let top10share = $derived(
-    profile && area ? profile.common.slice(0, 10).reduce((a, r) => a + r.count, 0) / area.voters : null
+    profiles && area && area.voters > 0 ? (profiles[area.id]?.top10 ?? 0) / area.voters : null
   )
   let rollChange = $derived(
     area?.voters_1997 ? (area.voters - area.voters_1997) / area.voters_1997 : null
   )
+
+  // Bars and national ticks share one scale, so a tick past its bar means
+  // under-represented and vice versa.
+  let maxShare = $derived(Math.max(0.01, ...mix.map((m) => Math.max(m.share, m.national))))
 
   let tab = $state('distinctive')
 
@@ -68,20 +94,23 @@
 
     <div class="card pad">
       <div class="lbl">{t('region.suffix_signature')}</div>
-      <div class="stack" style="margin-top:8px">
-        {#each mix as m, i}
-          <span style="width:{m.share * 100}%;background:{SEQ[Math.min(SEQ.length - 1, i + 1)]}"
-                title="{t(`suffix.${m.suffix}`)} {(m.share * 100).toFixed(0)}%">
-            {#if m.share > 0.12}<span class="pctlab">{t(`suffix.${m.suffix}`)} {(m.share * 100).toFixed(0)}%</span>{/if}
-          </span>
+      <!-- One bar per family, longest first. The two stacked strips this replaced
+           could not be read: nineteen segments in a 24px bar, most of them a few
+           pixels wide, with a caption explaining which strip was which. The tick
+           on each bar marks the same family's national share, so over- and
+           under-representation is visible without a second chart. -->
+      <div class="bars">
+        {#each mix as m}
+          <div class="bar" title="{familyLabelFull(m.suffix, t)} · {(m.share * 100).toFixed(1)}% {t('region.here_vs_national', { national: (m.national * 100).toFixed(1) })}">
+            <span class="bname">{familyLabel(m.suffix, t)}</span>
+            <span class="btrack">
+              <i class="bfill" style="width:{Math.min(100, (m.share / maxShare) * 100)}%"></i>
+              <i class="bnat" style="left:{Math.min(100, (m.national / maxShare) * 100)}%"></i>
+            </span>
+            <span class="bval num">{(m.share * 100).toFixed(1)}%</span>
+          </div>
         {/each}
       </div>
-      <div class="stack ghost">
-        {#each mix as m, i}
-          <span style="width:{m.national * 100}%;background:{SEQ[Math.min(SEQ.length - 1, i + 1)]}"></span>
-        {/each}
-      </div>
-      <div class="tiny mut" style="margin-top:5px">{t('region.suffix_compare', { area: areaName(area) })}</div>
     </div>
   </aside>
 
@@ -145,22 +174,30 @@
 </div>
 
 <style>
-  .wrap { display: grid; grid-template-columns: 400px minmax(0, 1fr); gap: 12px; padding: 12px;
+  .wrap { display: grid; grid-template-columns: minmax(0, 1fr) 470px; gap: 12px; padding: 12px;
     flex-grow: 1; min-height: 0; }
   .side { display: flex; flex-direction: column; gap: 12px; }
   .main { display: flex; flex-direction: column; gap: 10px; background: var(--card);
     border: 1px solid var(--rule); border-radius: 3px; padding: 14px; }
   .pad { padding: 11px; }
-  .map { position: relative; height: 280px; overflow: hidden; flex-shrink: 0; }
+  /* Fixed, not flexible. Letting it grow starved the nineteen bars underneath —
+     they were squeezed into a strip and became unreadable. The column scrolls
+     instead, which is what the scroll class on .side is for. */
+  .map { position: relative; flex: 0 0 auto; height: 430px; overflow: hidden; }
   .hint { position: absolute; bottom: 8px; left: 8px; background: rgba(255,253,250,.92);
     padding: 4px 7px; border-radius: 2px; z-index: 4; }
   .tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   .big { font-size: 20px; font-weight: 600; margin-top: 2px; }
   .big.down { color: var(--warm); }
-  .stack { display: flex; height: 24px; border-radius: 2px; overflow: hidden; }
-  .stack.ghost { height: 8px; opacity: 0.45; margin-top: 4px; }
-  .stack span { display: flex; align-items: center; justify-content: center; overflow: hidden; }
-  .pctlab { font-size: 9.5px; font-weight: 600; color: #fff; white-space: nowrap; }
+  .bars { display: flex; flex-direction: column; gap: 3px; margin-top: 8px; }
+  .bar { display: grid; grid-template-columns: 96px minmax(0, 1fr) 42px;
+    align-items: center; gap: 8px; min-height: 15px; }
+  .bname { font-size: 11px; line-height: 1.35; color: var(--ink2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .btrack { position: relative; height: 9px; background: var(--sunk); border-radius: 2px; }
+  .bfill { position: absolute; inset: 0 auto 0 0; background: var(--accent); border-radius: 2px; display: block; }
+  /* the same family's national share, so the bar has something to be read against */
+  .bnat { position: absolute; top: -2px; bottom: -2px; width: 1.5px; background: var(--ink2); opacity: .55; display: block; }
+  .bval { font-size: 10.5px; line-height: 1.35; color: var(--ink2); text-align: right; }
   .head h1 { font-size: 24px; font-weight: 600; margin: 2px 0 0; }
   .crumb { margin-bottom: 2px; }
   .tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--rule); }

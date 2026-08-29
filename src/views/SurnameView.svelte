@@ -2,7 +2,7 @@
   import { nav, go } from '../lib/state.svelte.js'
   import { t, name as areaName } from '../lib/i18n.svelte.js'
   import { getSurname, getKde } from '../lib/data.js'
-  import { areaSeries, valueOf } from '../lib/metrics.js'
+  import { areaSeries, valueOf, byMetric } from '../lib/metrics.js'
   import { scaleFor } from '../lib/colors.js'
   import { num, pct, times, metricValue } from '../lib/format.js'
   import MapView from '../components/MapView.svelte'
@@ -31,17 +31,19 @@
     record ? areaSeries({ record, entry, areas, geo: nav.geo, src: nav.src, meta }) : []
   )
   let valued = $derived(rows.map((r) => ({ ...r, value: valueOf(r, nav.metric) })))
-  let scale = $derived(scaleFor(nav.metric, valued.map((r) => r.value)))
+  // Only the rows the ramp actually paints. Suppressed, zero and no-electorate
+  // areas have their own swatches now, and leaving them in collapsed the scale:
+  // for a surname living in one municipality, 65 zeros dragged every quantile
+  // break to 0 and the legend read "0 … 0" while the map showed 111.
+  let scale = $derived(scaleFor(nav.metric,
+    valued.filter((r) => !r.suppressed && !r.noData && !r.zero).map((r) => r.value)))
   let anySuppressed = $derived(valued.some((r) => r.suppressed))
 
   let sortKey = $state('auto')
   let sorted = $derived.by(() => {
     const key = sortKey === 'auto' ? nav.metric : sortKey
     const pick = (r) => (key === 'count' ? r.count : key === 'rate' ? r.rate : key === 'change' ? r.change : r.lq)
-    return [...valued].sort((a, b) => {
-      if (a.suppressed !== b.suppressed) return a.suppressed ? 1 : -1
-      return (pick(b) ?? -Infinity) - (pick(a) ?? -Infinity)
-    })
+    return [...valued].sort(byMetric(pick))
   })
 
   let top = $derived(sorted.filter((r) => !r.suppressed && r.lq != null).slice(0, 4))
@@ -82,9 +84,6 @@
       <div class="latin mut">{entry?.latin}</div>
       <div class="chips">
         <span class="chip">{t(`suffix.${entry?.suffix}`)}</span>
-        {#if t(`suffix.${entry?.suffix}.region`) !== `suffix.${entry?.suffix}.region`}
-          <span class="chip">{t(`suffix.${entry?.suffix}.region`)}</span>
-        {/if}
       </div>
     </div>
 
@@ -132,7 +131,11 @@
       onpick={pickArea}
     />
     <div class="overlay tl"><LayerPanel bind:showBase bind:showFills bind:showKde bind:fillOpacity bind:kdeOpacity hasKde={!!kdeCells?.length} /></div>
-    <div class="overlay bl"><Legend {scale} metric={nav.metric} k={meta.suppression.k} {anySuppressed} /></div>
+    <div class="overlay bl"><Legend {scale} metric={nav.metric} k={meta.suppression.k} {anySuppressed}
+          anyZero={valued.some((r) => r.zero)}
+          anyNoData={valued.some((r) => r.noData)}
+          anyBelowMin={nav.metric === 'lq' && valued.some((r) => !r.suppressed && !r.noData && !r.zero && r.lq == null)}
+          minLq={meta.suppression.min_count_for_lq} /></div>
   </section>
 
   <!-- ranked areas -->

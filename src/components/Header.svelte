@@ -40,8 +40,10 @@
 </script>
 
 <header>
-  <a class="brand" href="#/s/beridze">
-    <span class="mark">გვარები</span>
+  <!-- The wordmark was hardcoded Georgian and the link pointed at one specific
+       surname in the old latin route form. Both follow the locale now. -->
+  <a class="brand" href="#/">
+    <span class="mark">{t('app.title')}</span>
     <span class="lbl">{t('app.tagline')}</span>
   </a>
 
@@ -95,7 +97,15 @@
   }
   .brand { display: flex; flex-direction: column; gap: 1px; text-decoration: none; color: inherit; }
   .brand:hover { text-decoration: none; }
-  .mark { font-size: 17px; font-weight: 600; letter-spacing: -0.01em; }
+  /* Uppercases the Latin wordmark only. Unicode deliberately defines no
+     uppercase mapping from Mkhedruli to Mtavruli — they are separate styles,
+     not a case pair — so text-transform leaves Georgian untouched, which I
+     confirmed by rendering rather than assuming. The Georgian wordmark stays
+     მაშასადამე; to set it in caps the locale value has to carry Mtavruli
+     characters directly, and the font has to cover U+1C90-1CBA. Positive
+     tracking because caps need more air than lowercase. */
+  .mark { font-family: "BPG Nino Mtavruli", "BPG Sans Modern", "Noto Sans Georgian", system-ui, sans-serif;
+    font-size: 17px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
   .search { position: relative; display: flex; align-items: center; gap: 8px;
     flex-grow: 1; max-width: 380px; border: 1px solid var(--rule); border-radius: 3px;
     background: var(--paper); padding: 7px 11px; color: var(--ink3); }

@@ -38,7 +38,14 @@ export function areaSeries({ record, entry, areas, geo, src, meta }) {
   return list.map((area) => {
     const suppressed = dropped.has(area.id)
     const count = suppressed ? null : (counts[area.id] ?? 0)
-    const row = { area, suppressed, count, rate: null, lq: null, change: null }
+    // An area with no electorate has no denominator, so nothing can be computed
+    // for it — that, and only that, is "no data". A count of zero is a result.
+    const noData = !(area.voters > 0)
+    const row = {
+      area, suppressed, count, noData,
+      zero: !suppressed && !noData && count === 0,
+      rate: null, lq: null, change: null,
+    }
     if (suppressed) return row
 
     row.rate = rate(count, area.voters)
@@ -53,6 +60,45 @@ export function areaSeries({ record, entry, areas, geo, src, meta }) {
     }
     return row
   })
+}
+
+/**
+ * Order rows by a metric, largest first, placing suppressed rows correctly.
+ *
+ * A suppressed cell holds between 1 and k-1 people. That is MORE than a true
+ * zero and less than anything published, so it belongs between them. The old
+ * comparator pushed every suppressed row to the very bottom, below areas where
+ * the surname genuinely does not occur — which told the reader the opposite of
+ * what the data says.
+ */
+export function byMetric(pick) {
+  // Two tiers, and which tier a row lands in is the whole trick.
+  //
+  //   tier 1  the row has a real reading for this metric
+  //   tier 0  it does not — ranked by headcount instead, because that is the
+  //           only thing left to compare, and it is what the reader means
+  //
+  // A withheld cell holds 1 to k-1 people, so it sits at half a person: above an
+  // empty area, below any published one. An empty area is a zero regardless of
+  // metric, which is why it drops to tier 0 even under "count", where 0 is
+  // technically a value — otherwise it would outrank the withheld cells above it.
+  //
+  // Under "concentration" tier 0 is most of the table: a quotient is null for a
+  // withheld cell, for an empty area, and for every area under the {min_count}
+  // floor. Ranking that tail by headcount is what puts 40 people above 7 above
+  // "fewer than 5" above none.
+  const rank = (r) => {
+    const v = r.suppressed || r.zero ? null : pick(r)
+    if (v != null) return [1, v]
+    if (r.suppressed) return [0, 0.5]
+    return [0, r.zero ? 0 : (r.count ?? -1)]
+  }
+  return (a, b) => {
+    const [at, av] = rank(a)
+    const [bt, bv] = rank(b)
+    if (at !== bt) return bt - at
+    return bv === av ? 0 : bv - av
+  }
 }
 
 /** Value the map and legend read, given the active metric. */
@@ -92,19 +138,33 @@ export function areaProfile({ buckets, index, area, geo, meta }) {
 }
 
 /** Share of an area's surnames by suffix family, against the national profile. */
-export function suffixMix(rows, index) {
-  const tally = (pairs) => {
-    const t = {}
-    let total = 0
-    for (const [suffix, n] of pairs) { t[suffix] = (t[suffix] ?? 0) + n; total += n }
-    return { t, total }
+/**
+ * Share of an area's voters by suffix family, against the national share.
+ *
+ * Takes the precomputed per-area tallies from suffix.json rather than a list of
+ * surnames: the family list used to be hardcoded to six, which silently dropped
+ * thirteen of the nineteen families the roll actually carries — an area whose
+ * commonest ending is -ov/-ev/-in showed an almost empty bar. Families beyond
+ * `top` are folded into "other" so the bar stays readable.
+ */
+export function suffixMix(here, national, top = 6) {
+  const sum = (o) => Object.values(o ?? {}).reduce((a, b) => a + b, 0)
+  const hereTotal = sum(here), natTotal = sum(national)
+  if (!hereTotal) return []
+  const ranked = Object.entries(here).sort((a, b) => b[1] - a[1])
+  const named = ranked.slice(0, top)
+  const restHere = ranked.slice(top).reduce((a, [, n]) => a + n, 0)
+  const restNat = Object.entries(national ?? {})
+    .filter(([f]) => !named.some(([g]) => g === f))
+    .reduce((a, [, n]) => a + n, 0)
+  const out = named.map(([suffix, n]) => ({
+    suffix,
+    share: n / hereTotal,
+    national: natTotal ? (national?.[suffix] ?? 0) / natTotal : 0,
+  }))
+  if (restHere > 0) {
+    out.push({ suffix: 'other', share: restHere / hereTotal, national: natTotal ? restNat / natTotal : 0 })
   }
-  const here = tally(rows.map((r) => [r.entry.suffix, r.count]))
-  const nat = tally(index.list.map((s) => [s.suffix, s.voters]))
-  const families = ['dze', 'shvili', 'ia', 'iani', 'uri', 'other']
-  return families.map((f) => ({
-    suffix: f,
-    share: here.total ? (here.t[f] ?? 0) / here.total : 0,
-    national: nat.total ? (nat.t[f] ?? 0) / nat.total : 0,
-  })).filter((d) => d.share > 0 || d.national > 0)
+  return out
 }
+

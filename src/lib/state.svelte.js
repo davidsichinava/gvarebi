@@ -13,7 +13,11 @@
 
 import { SHOW_1997 } from './features.js'
 
-const DEFAULTS = { geo: 'mun', metric: 'lq', src: 'voters', lang: 'en' }
+// Georgian is the default: this is a site about Georgian surnames, read mostly
+// in Georgia. English is still the fallback dictionary for anything untranslated
+// — see i18n.svelte.js — so the two roles are separate. A URL only carries
+// ?lang=en now, when a reader has asked for English.
+const DEFAULTS = { geo: 'mun', metric: 'lq', src: 'voters', lang: 'ka' }
 
 function parse() {
   const raw = location.hash.replace(/^#/, '') || '/'
@@ -29,6 +33,13 @@ function parse() {
 
   const s = { view, a, b }
   for (const k of Object.keys(DEFAULTS)) s[k] = q.get(k) || DEFAULTS[k]
+
+  // A region URL carries its level in the path — /r/dis/79 — but geo was only
+  // ever read from the query, so it silently stayed 'mun' and the view looked
+  // the id up in the wrong list. District 79 and municipality 79 both exist, so
+  // this did not error: /r/dis/79 rendered Batumi city, a different place with
+  // the same number. The path wins for region routes.
+  if (view === 'region' && (a === 'mun' || a === 'dis')) s.geo = a
 
   // While the 1997 sources are hidden there is no control that can reach them,
   // but a bookmarked ?src=change link still can. Clamp it here rather than
@@ -46,12 +57,17 @@ function parse() {
 function toHash(s) {
   let path = '/'
   if (s.view === 'surname') path = `/s/${encodeURIComponent(s.a)}`
-  else if (s.view === 'region') path = `/r/${s.a}/${s.b}`
+  else if (s.view === 'region') path = `/r/${s.geo}/${s.b}`
   else if (s.view === 'explore') path = '/explore'
   else if (s.view === 'method') path = '/method'
 
   const q = new URLSearchParams()
-  for (const k of Object.keys(DEFAULTS)) if (s[k] !== DEFAULTS[k]) q.set(k, s[k])
+  for (const k of Object.keys(DEFAULTS)) {
+    // geo already sits in a region path; repeating it in the query is a second
+    // copy of the same fact, and two copies drift.
+    if (k === 'geo' && s.view === 'region') continue
+    if (s[k] !== DEFAULTS[k]) q.set(k, s[k])
+  }
   const qs = q.toString()
   return `#${path}${qs ? '?' + qs : ''}`
 }

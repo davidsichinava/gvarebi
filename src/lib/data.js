@@ -18,6 +18,13 @@ export const getMeta = () => json('meta.json')
 export const getAreas = () => json('areas.json')
 export const getGeo = (geo) => json(`geo/${geo}.geo.json`)
 export const getAggBucket = (b) => json(`agg/${b}.json`)
+
+/** Per-area rankings, precomputed by build.R. Replaces walking every surname in
+ *  every bucket on each visit — see the profiles section of build/build.R. */
+export const getProfiles = (geo) => json(`profiles/${geo}.json`)
+
+/** Surname counts rolled up by suffix family, per area, plus national totals. */
+export const getSuffix = () => json('suffix.json')
 export const getKdeBucket = (b) => json(`kde/${b}.json`).catch(() => ({}))
 export const getLocale = (lang) => json(`i18n/${lang}.json`)
 

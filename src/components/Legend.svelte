@@ -1,9 +1,10 @@
 <script>
   import { t } from '../lib/i18n.svelte.js'
-  import { SUPPRESSED, NO_DATA } from '../lib/colors.js'
+  import { SUPPRESSED, NO_DATA, ZERO } from '../lib/colors.js'
   import { num, times, pct } from '../lib/format.js'
 
-  let { scale, metric, k = 5, anySuppressed = false } = $props()
+  let { scale, metric, k = 5, anySuppressed = false,
+        anyZero = false, anyNoData = false, anyBelowMin = false, minLq = 50 } = $props()
 
   const fmt = (v) => {
     if (v == null) return ''
@@ -35,10 +36,21 @@
   {#if anySuppressed}
     <div class="key tiny mut"><i style="background:{SUPPRESSED}"></i>{t('legend.suppressed', { k })}</div>
   {/if}
-  <div class="key tiny mut"><i style="background:{NO_DATA}"></i>{t('legend.no_data')}</div>
+  {#if anyBelowMin}
+    <div class="key tiny mut"><i style="background:{NO_DATA}"></i>{t('legend.below_min', { min: minLq })}</div>
+  {/if}
+  {#if anyZero}
+    <div class="key tiny mut"><i style="background:{ZERO}"></i>{t('legend.none')}</div>
+  {/if}
+  {#if anyNoData}
+    <div class="key tiny mut"><i class="nodata" style="background-color:{NO_DATA}"></i>{t('legend.no_data')}</div>
+  {/if}
 </div>
 
 <style>
+  /* Mirrors the map's no-data fill: light grey under thin dark grey stripes. */
+  .nodata { background-image: repeating-linear-gradient(45deg,
+    rgba(90,86,79,.55) 0 0.9px, transparent 0.9px 3px); }
   .legend { padding: 8px 10px; display: flex; flex-direction: column; gap: 5px; min-width: 172px;
     box-shadow: var(--shadow); background: rgba(255,253,250,.94); }
   .ramp { display: flex; }

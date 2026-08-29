@@ -4,6 +4,13 @@
   import { SHOW_1997 } from '../lib/features.js'
   let { meta } = $props()
   let k = $derived(meta.suppression.k)
+
+  // Every sentence on this page is a locale key. It used to be 218 words of
+  // English sitting directly in the markup, which meant the one page that
+  // explains the method was the one page that could not be translated. Where a
+  // sentence needs emphasis, the bold half is its own key (…_lead) rather than
+  // markup inside a translated string — a translator should never have to hand
+  // back HTML.
 </script>
 
 <div class="scroll">
@@ -11,69 +18,14 @@
     <h1>{t('method.title')}</h1>
     <p class="stand mut">{t('method.subtitle')}</p>
 
-    <div class="sources">
-      <div class="card pad">
-        <div class="lbl">{t('source.voters')}</div>
-        <p class="tiny">{meta.sources.voters.date} · {num(meta.sources.voters.records)} records ·
-          aggregated to surname × precinct, then to municipality and electoral district.</p>
-      </div>
-      {#if SHOW_1997}
-        <div class="card pad">
-          <div class="lbl">{t('source.book1997')}</div>
-          <p class="tiny">{meta.sources.book1997.citation} · municipal level only, which is why the
-            district toggle is unavailable for it.</p>
-        </div>
-      {/if}
-      <div class="card pad">
-        <div class="lbl">Boundaries</div>
-        <p class="tiny">Sample geometry in this prototype — Voronoi cells around the area centroids,
-          not real administrative boundaries. Replace <code>data/geo/*.geo.json</code> and nothing
-          else changes.</p>
-      </div>
-    </div>
-
-    <h2>{t('method.privacy')}</h2>
-    <p>A surname in a single precinct can identify a household. Three rules follow, and all three are
-      enforced in the build script rather than in this interface — so the browser never receives
-      anything that needs protecting.</p>
-    <ol>
-      <li>Any surname × area cell with fewer than <b>{k}</b> people is suppressed and shown as
-        <span class="mono">n &lt; {k}</span>. Suppressed cells are excluded from every ranking and rate.</li>
-      <li><b>Precinct-level counts are never published in any form.</b> They exist only inside the
-        build, where they are smoothed into a continuous surface.</li>
-      <li>The hotspot layer is a kernel density estimate at {meta.kde.bandwidth_km} km bandwidth on a
-        {meta.kde.grid.cols} × {meta.kde.grid.rows} grid, quantised to one byte per cell, with the
-        tail floored to zero. It shows where a surname is dense; it cannot be read back to a count
-        at a point.</li>
-      <li>Complementary suppression: because the national total is published, a lone suppressed cell
-        is recoverable by subtraction, so the next-smallest cell is suppressed too.</li>
-    </ol>
+    <h2>{t('source.voters')}</h2>
+    <p><b>{t('method.source_voters')}</b></p>
 
     <h2>{t('method.metrics')}</h2>
-    <p><b>{t('metric.count')}</b> is people on the roll. <b>{t('metric.rate')}</b> divides by everyone
-      on the roll in that area. <b>{t('metric.lq')}</b> is a location quotient:</p>
-    <pre>concentration = (name_in_area / all_in_area) ÷ (name_national / all_national)</pre>
-    <p>1 means exactly as common here as everywhere; 6 means six times over-represented. It is the
-      metric that finds a surname's home region, and the one most easily misread — small areas
-      produce large quotients, so a floor of {meta.suppression.min_count_for_lq} people applies
-      before a quotient is displayed.</p>
+	<p><b>{t('method.metrics_description')}</b></p>
+    <pre>{t('method.metrics_formula')}</pre>
+    <p>{t('method.metrics_note', { min: meta.suppression.min_count_for_lq })}</p>
 
-    <h2>{t('method.limitations')}</h2>
-    <ul>
-      <li><b>The roll is not the population.</b> No under-18s, no non-citizens, and emigrants often
-        remain listed.</li>
-      {#if SHOW_1997}
-        <li><b>1997 is not a census.</b> Coverage and method differ; treat the change column as
-          directional, not exact.</li>
-      {/if}
-      <li><b>Registration is not residence</b>, which matters for internally displaced people.</li>
-      <li><b>Spelling variants are not merged</b> unless listed in <span class="mono">surnames_meta.csv</span>.</li>
-      {#if SHOW_1997}
-        <li><b>Boundaries changed</b> between 1997 and today; 1997 figures must be apportioned onto
-          current geography before they reach the build.</li>
-      {/if}
-      <li><b>Suffix families are a heuristic</b>, not a linguistic classification.</li>
-    </ul>
   </article>
 </div>
 

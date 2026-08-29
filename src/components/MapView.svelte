@@ -2,7 +2,7 @@
   import { Map as MapLibreMap, Popup, NavigationControl } from 'maplibre-gl'
   import { getGeo } from '../lib/data.js'
   import { paintKde, bboxCoordinates } from '../lib/kde.js'
-  import { NO_DATA, SUPPRESSED } from '../lib/colors.js'
+  import { NO_DATA, SUPPRESSED, ZERO } from '../lib/colors.js'
   import { t, name as areaName } from '../lib/i18n.svelte.js'
 
   let {
@@ -18,6 +18,14 @@
     showBase = true,
     selected = null,
     tooltip = null,
+    // Optional second channel for categorical maps: a predicate over a row that
+    // says whether its area carries a diagonal hatch. Colour alone tops out at
+    // four separable classes on a choropleth; texture is what takes it to seven.
+    hatched = null,
+    // Areas with nothing to show. They get a finer, greyer hatch than the
+    // categorical one — flat grey read as a real value, which is exactly what
+    // "no data" is not.
+    nodata = null,
     onpick = () => {},
   } = $props()
 
@@ -87,7 +95,7 @@
       map.touchZoomRotate?.disableRotation?.()
       map.addControl(new NavigationControl({ showCompass: false }), 'top-right')
       map.on('error', (e) => console.warn('[map]', e?.error?.message ?? e))
-      map.on('load', () => { ready = true })
+      map.on('load', () => { addHatchImage(); ready = true })
       // ?debug exposes the map for the inspector in tools/ and for the console.
       if (DEBUG) window.__map = map
     } catch (e) {
@@ -97,6 +105,37 @@
     }
     return () => { try { map?.remove() } catch {} map = null }
   })
+
+  // A 45-degree hatch, drawn once and registered with the map. Semi-transparent
+  // black over whatever colour the fill beneath it already carries, so one image
+  // serves every hue instead of one tinted image per category.
+  const HATCH = 8
+  function stripes(size, stroke, width) {
+    const dpr = Math.min(2, Math.round(window.devicePixelRatio || 1))
+    const n = size * dpr
+    const c = document.createElement('canvas')
+    c.width = c.height = n
+    const g = c.getContext('2d')
+    g.strokeStyle = stroke
+    g.lineWidth = width * dpr
+    // Three passes so the stripes tile seamlessly across the diagonal seam.
+    for (const off of [-n, 0, n]) {
+      g.beginPath()
+      g.moveTo(off, n)
+      g.lineTo(off + n, 0)
+      g.stroke()
+    }
+    return { data: g.getImageData(0, 0, n, n), pixelRatio: dpr }
+  }
+  function addHatchImage() {
+    if (!map || map.hasImage?.('hatch')) return
+    const cat = stripes(HATCH, 'rgba(28,26,23,.42)', 1.6)
+    map.addImage('hatch', cat.data, { pixelRatio: cat.pixelRatio })
+    // Finer and lighter: it marks an absence, so it must not compete with the
+    // categories for attention.
+    const nd = stripes(6, 'rgba(90,86,79,.55)', 0.9)
+    map.addImage('hatch-nodata', nd.data, { pixelRatio: nd.pixelRatio })
+  }
 
   // ---------------------------------------------------------------- boundaries
   $effect(() => {
@@ -120,6 +159,11 @@
             'line-color': ['case', ['boolean', ['feature-state', 'selected'], false], '#22201d', '#8d877e'],
             'line-width': ['case', ['boolean', ['feature-state', 'selected'], false], 2.2, 0.8],
           },
+        })
+        map.addLayer({
+          id: 'areas-hatch', type: 'fill', source: 'areas',
+          paint: { 'fill-pattern': 'hatch', 'fill-opacity': 0 },
+          filter: ['in', ['get', 'code'], ['literal', []]],
         })
         wireInteraction()
         layersReady = true
@@ -165,17 +209,41 @@
   // is the normal first run. The effect would then never re-run when the data
   // landed, leaving the fills flat at NO_DATA with no error anywhere.
   $effect(() => {
-    const data = rows, sc = scale, fills = showFills, opacity = fillOpacity
+    const data = rows, sc = scale, fills = showFills, opacity = fillOpacity, hatch = hatched, blanks = nodata
     if (!ready || !layersReady || !map?.getLayer('areas-fill')) return
     const match = ['match', ['get', 'code']]
     let any = false
     for (const r of data) {
-      match.push(r.area.code, r.suppressed ? SUPPRESSED : (sc ? sc.color(r.value) : NO_DATA))
+      // Order matters: no electorate beats withheld beats empty beats a value.
+      const fill = r.noData ? NO_DATA
+        : r.suppressed ? SUPPRESSED
+        : r.zero ? ZERO
+        : (sc ? sc.color(r.value) : NO_DATA)
+      match.push(r.area.code, fill)
       any = true
     }
     match.push(NO_DATA)
     map.setPaintProperty('areas-fill', 'fill-color', any ? match : NO_DATA)
     map.setPaintProperty('areas-fill', 'fill-opacity', fills ? opacity : 0)
+
+    if (map.getLayer('areas-hatch')) {
+      const marked = hatch ? data.filter((r) => !r.suppressed && hatch(r)).map((r) => r.area.code) : []
+      // Only areas with no electorate. This used to hatch anything with a null
+      // value, which swept up every area sitting below the quotient floor — 22
+      // of 66 for a mid-sized surname — and told the reader they had no data
+      // when they had a count.
+      const blank = data
+        .filter((r) => !r.suppressed && (blanks ? blanks(r) : r.noData === true))
+        .map((r) => r.area.code)
+      const all = [...marked, ...blank]
+      const pattern = ['match', ['get', 'code']]
+      for (const code of marked) pattern.push(code, 'hatch')
+      for (const code of blank) pattern.push(code, 'hatch-nodata')
+      pattern.push('hatch')
+      map.setFilter('areas-hatch', ['in', ['get', 'code'], ['literal', all]])
+      map.setPaintProperty('areas-hatch', 'fill-pattern', all.length ? pattern : 'hatch')
+      map.setPaintProperty('areas-hatch', 'fill-opacity', fills && all.length ? opacity : 0)
+    }
   })
 
   // ---------------------------------------------------------------- selection

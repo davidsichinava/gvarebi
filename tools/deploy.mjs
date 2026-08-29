@@ -13,7 +13,7 @@
 // and never accumulates. Git LFS is not the answer either — Pages serves LFS
 // pointer files rather than their contents.
 import { execFileSync } from 'node:child_process'
-import { existsSync, writeFileSync, rmSync, readdirSync } from 'node:fs'
+import { existsSync, writeFileSync, readFileSync, rmSync, readdirSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -24,8 +24,8 @@ const BRANCH = process.env.DEPLOY_BRANCH || 'gh-pages'
 
 const git = (args, cwd = ROOT) =>
   execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
-const run = (cmd, args, cwd = ROOT) =>
-  execFileSync(cmd, args, { cwd, stdio: 'inherit', shell: process.platform === 'win32' })
+const run = (cmd, args, cwd = ROOT, env = process.env) =>
+  execFileSync(cmd, args, { cwd, env, stdio: 'inherit', shell: process.platform === 'win32' })
 
 // ---------------------------------------------------------------- remote
 let remote
@@ -39,18 +39,41 @@ try {
 // Both https://github.com/u/r.git and git@github.com:u/r.git
 const repo = remote.replace(/\.git$/, '').split(/[/:]/).pop()
 
-// A project site is served from /<repo>/; a user site or custom domain from /.
-const base = process.env.BASE_PATH ?? `/${repo}/`
+// A project site is served from /<repo>/, but a USER or ORG site — a repo named
+// <account>.github.io — is served from the root, and so is any custom domain.
+// Getting this wrong does not fail: the build succeeds, the deploy succeeds, and
+// the page returns 200 while 404ing on its own JavaScript. Hence the assertion
+// further down as well.
+const isUserSite = /\.github\.io$/i.test(repo)
+const base = process.env.BASE_PATH ?? (isUserSite ? '/' : `/${repo}/`)
 console.log(`repo   ${repo}\nremote ${remote}\nbase   ${base}\nbranch ${BRANCH}\n`)
 
 // ---------------------------------------------------------------- build
+// vite reads the base path from the environment, so it has to reach the child
+// process — computing it here and not passing it on was the whole bug: the
+// build silently defaulted to '/', every asset came out root-absolute, and the
+// deployed page 404'd on its own JavaScript while still returning HTTP 200.
 console.log('building…')
-run('npm', ['run', 'build'], ROOT)
+run('npm', ['run', 'build'], ROOT, { ...process.env, BASE_PATH: base })
 
-if (!existsSync(join(DIST, 'index.html'))) {
+const indexPath = join(DIST, 'index.html')
+if (!existsSync(indexPath)) {
   console.error('dist/index.html is missing — the build did not produce a site.')
   process.exit(1)
 }
+// Assert the base actually took. A wrong base still builds, still deploys, and
+// still serves a 200 — it just serves a blank page, which is the hardest kind
+// of failure to spot from the outside.
+const html = readFileSync(indexPath, 'utf8')
+const refs = [...html.matchAll(/(?:src|href)="([^"]+)"/g)].map((m) => m[1])
+const wrong = refs.filter((r) => r.startsWith('/') && !r.startsWith(base))
+if (wrong.length) {
+  console.error(`
+index.html references ${wrong.join(', ')}, which does not start with the base ${base}.`)
+  console.error('The site would return 200 and render nothing. Aborting.')
+  process.exit(1)
+}
+console.log(`base applied: ${refs.filter((r) => r.startsWith(base)).length} asset reference(s) under ${base}`)
 // Without this, Pages runs the output through Jekyll, which skips files and
 // directories beginning with an underscore and slows every deploy down.
 writeFileSync(join(DIST, '.nojekyll'), '')

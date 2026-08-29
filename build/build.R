@@ -289,6 +289,99 @@ for (b in sort(unique(idx$bucket))) {
 }
 say("agg: %d buckets", length(unique(idx$bucket)))
 
+# ----------------------------------------------------------------- profiles
+# Per-area rankings, precomputed. The front end used to derive these live: fetch
+# all 256 agg buckets (~9 MB), then walk every one of the 69,290 surnames once
+# per area to find the most common and the most over-represented. For the
+# Explore map that is 66 areas x 69,290 surnames on every visit, which is what
+# made the tab slow. None of it depends on anything the reader does, so it
+# belongs here.
+#
+# Built from the PUBLISHED counts, not the raw ones, so a profile can never
+# surface a cell that suppression withheld.
+TOPN <- 25L
+
+profiles_for <- function(keep, area_dt) {
+  d <- merge(keep, idx[, .(surname, nat = voters)], by = "surname")
+  d <- merge(d, area_dt[, .(area_id, av = voters_total)], by = "area_id")
+  # A quotient needs a denominator; an area with no electorate has none.
+  d[, lq := fifelse(n >= CFG$min_count_lq & av > 0,
+                    (n / av) / (nat / NAT_VOTERS), NA_real_)]
+  setorder(d, area_id, -n)
+  common <- d[, .(rows = list(lapply(seq_len(min(.N, TOPN)),
+                    function(i) list(surname[i], n[i])))), by = area_id]
+  distinct_n <- d[, .(distinct = .N), by = area_id]
+  q <- d[!is.na(lq)]
+  # Ties at the ceiling are the norm, not the exception. A surname found ONLY in
+  # one area has nat == n, so its quotient collapses to NAT_VOTERS / area voters
+  # — a constant. Every one of Tbilisi's top 25 sits at exactly 3.525x. Ordering
+  # by quotient alone therefore picks arbitrarily among them; break the tie on
+  # count so the answer is both stable and the most substantial of the tied set.
+  setorder(q, area_id, -lq, -n)
+  distinctive <- q[, .(rows = list(lapply(seq_len(min(.N, TOPN)),
+                    function(i) list(surname[i], n[i], round(lq[i], 3))))), by = area_id]
+  top10 <- d[, .(top10 = sum(utils::head(n, 10L))), by = area_id]
+
+  out <- list()
+  for (a in area_dt$area_id) {
+    ck <- common[area_id == a]; qk <- distinctive[area_id == a]
+    out[[as.character(a)]] <- list(
+      distinct    = if (nrow(distinct_n[area_id == a])) distinct_n[area_id == a, distinct] else 0L,
+      top10       = if (nrow(top10[area_id == a])) top10[area_id == a, top10] else 0L,
+      common      = if (nrow(ck)) ck$rows[[1]] else list(),
+      distinctive = if (nrow(qk)) qk$rows[[1]] else list())
+  }
+  out
+}
+
+dir.create(file.path(OUT, "profiles"), showWarnings = FALSE, recursive = TRUE)
+write_json_file(profiles_for(s_mun$keep, mun), file.path(OUT, "profiles", "mun.json"))
+write_json_file(profiles_for(s_dis$keep, dis), file.path(OUT, "profiles", "dis.json"))
+say("profiles: top %d per area, both levels", TOPN)
+
+# ----------------------------------------------------------------- suffixes
+# Surname counts rolled up by suffix family, per area. Feeds the suffix map,
+# where a family is compared against its own national share rather than against
+# the other families - so the reader sees where -dze is concentrated, not merely
+# where it is numerous.
+#
+# Rolled up from the RAW counts, because a family total is a sum over many
+# surnames and dropping the sub-k cells would bias it downwards. The family x
+# area cell is then suppressed on the same k as everything else: a family thin
+# enough to identify somebody in one area is withheld there.
+# Families come from surnames_meta.csv and nowhere else. idx carries the column
+# straight from that file; the suffix_family() heuristic above only fills a gap
+# where the file leaves one blank, and on the current roll it never fires.
+# Anything still empty is "other" rather than a family of its own.
+fam <- idx[, .(surname, suffix_family)]
+fam[is.na(suffix_family) | !nzchar(suffix_family), suffix_family := "other"]
+
+suffix_roll <- function(agg, area_dt) {
+  d <- merge(agg, fam[, .(surname, suffix_family)], by = "surname")
+  r <- d[, .(n = sum(n)), by = .(suffix_family, area_id)]
+  r <- r[n >= CFG$k]                      # same threshold as every other cell
+  r <- r[area_id %in% area_dt$area_id]
+  out <- list()
+  for (a in area_dt$area_id) {
+    rows <- r[area_id == a]
+    out[[as.character(a)]] <- if (nrow(rows)) named(rows$suffix_family, rows$n) else structure(list(), names = character(0))
+  }
+  out
+}
+
+fam_nat <- merge(agg_mun, fam[, .(surname, suffix_family)], by = "surname")[
+  , .(n = sum(n)), by = suffix_family]
+setorder(fam_nat, -n)
+
+write_json_file(list(
+  families = fam_nat$suffix_family,
+  national = named(fam_nat$suffix_family, fam_nat$n),
+  mun = suffix_roll(agg_mun, mun),
+  dis = suffix_roll(agg_dis, dis)
+), file.path(OUT, "suffix.json"))
+say("suffixes: %d families across %d municipalities and %d districts",
+    nrow(fam_nat), nrow(mun), nrow(dis))
+
 # ----------------------------------------------------------------- kde
 # A Gaussian kernel over precinct points, on a fixed grid, quantised to one
 # byte per cell and stored sparse. The precinct coordinates are consumed here;

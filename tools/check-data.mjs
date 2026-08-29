@@ -5,6 +5,7 @@ import { readFileSync, existsSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { areaSeries, areaProfile, lq, rate } from '../src/lib/metrics.js'
 import { scaleFor } from '../src/lib/colors.js'
+import { CATEGORIES } from '../src/lib/suffix.js'
 
 const DIR = process.argv[2] ?? 'public/data'
 const read = (p) => JSON.parse(readFileSync(join(DIR, p), 'utf8'))
@@ -16,6 +17,8 @@ const ok = (cond, label, detail = '') => {
 }
 
 const meta = read('meta.json')
+// Hoisted: the profile and suffix sections below assert against it too.
+const k = meta.suppression.k
 const areas = read('areas.json')
 const idxRaw = read('index.json')
 const at = Object.fromEntries(idxRaw.columns.map((c, i) => [c, i]))
@@ -82,9 +85,106 @@ ok(areas.mun.every((a) => a.voters != null && a.voters >= 0), 'every area has a 
 const zeroDen = areas.mun.filter((a) => a.voters === 0)
 if (zeroDen.length) console.log(`       ${zeroDen.length} area(s) with no electorate: ${zeroDen.map((a) => a.name_en).join(', ')}`)
 
+// ---------------------------------------------------------------- profiles
+console.log('\nprofiles')
+for (const geo of ['mun', 'dis']) {
+  const prof = read(`profiles/${geo}.json`)
+  const ids = areas[geo].map((a) => String(a.id))
+  ok(ids.every((id) => prof[id]), `${geo}: every area has a profile`,
+     ids.filter((id) => !prof[id]).join(',') || '')
+
+  // The same jsonlite unboxing trap as the suppressed lists: a profile holding
+  // exactly one row would ship as [ka, n] rather than [[ka, n]], and .map()
+  // over it would iterate the characters of a surname.
+  const shapes = Object.values(prof).filter(
+    (p) => !Array.isArray(p.common) || !Array.isArray(p.distinctive) ||
+           p.common.some((r) => !Array.isArray(r)) || p.distinctive.some((r) => !Array.isArray(r))
+  )
+  ok(shapes.length === 0, `${geo}: common and distinctive are arrays of rows`, `${shapes.length} malformed`)
+
+  const bad = []
+  for (const [id, p] of Object.entries(prof)) {
+    for (let i = 1; i < p.common.length; i++) if (p.common[i][1] > p.common[i - 1][1]) bad.push(`${id} common`)
+    for (let i = 1; i < p.distinctive.length; i++) if (p.distinctive[i][2] > p.distinctive[i - 1][2]) bad.push(`${id} distinctive`)
+  }
+  ok(bad.length === 0, `${geo}: rankings are sorted`, [...new Set(bad)].slice(0, 3).join(',') || '')
+
+  const unknown = new Set()
+  for (const p of Object.values(prof))
+    for (const [ka] of [...p.common, ...p.distinctive]) if (!index.byKa.has(ka)) unknown.add(ka)
+  ok(unknown.size === 0, `${geo}: every ranked surname is in the index`, [...unknown].slice(0, 3).join(',') || '')
+
+  const leak = Object.values(prof).some((p) =>
+    [...p.common, ...p.distinctive].some(([, n]) => n < k))
+  ok(!leak, `${geo}: no profile row is below k=${k}`)
+}
+
+// ---------------------------------------------------------------- suffixes
+console.log('\nsuffixes')
+const suf = read('suffix.json')
+ok(Array.isArray(suf.families) && suf.families.length > 0, 'families is a non-empty array',
+   `${suf.families?.length ?? 0} families`)
+ok(suf.families.every((f) => suf.national[f] > 0), 'every family has a national total')
+for (const geo of ['mun', 'dis']) {
+  const per = suf[geo]
+  ok(areas[geo].every((a) => per[String(a.id)] !== undefined), `${geo}: every area has a suffix tally`)
+  const stray = new Set()
+  let below = 0
+  for (const tally of Object.values(per))
+    for (const [fam, n] of Object.entries(tally)) {
+      if (!suf.families.includes(fam)) stray.add(fam)
+      if (n < k) below++
+    }
+  ok(stray.size === 0, `${geo}: no family outside the declared list`, [...stray].slice(0, 3).join(',') || '')
+  ok(below === 0, `${geo}: no published family cell is below k=${k}`, below ? `${below} cells` : '')
+}
+// A family total must not exceed the area's electorate, which would mean the
+// rollup double-counted a surname across families.
+const overflow = []
+for (const geo of ['mun', 'dis']) {
+  const byId = Object.fromEntries(areas[geo].map((a) => [String(a.id), a.voters]))
+  for (const [id, tally] of Object.entries(suf[geo])) {
+    const total = Object.values(tally).reduce((a, b) => a + b, 0)
+    if (byId[id] && total > byId[id]) overflow.push(`${geo}/${id}`)
+  }
+}
+ok(overflow.length === 0, "no area's families exceed its electorate", overflow.slice(0, 3).join(',') || '')
+
+// The families come from surnames_meta.csv and nowhere else, so a suffix.* label
+// must name one of them. Two ways that drifts, both of which happened: a key
+// outlives the family it described (suffix.iani, after -iani became -ani), and a
+// label keeps describing a merge the data no longer makes (suffix.ia read
+// "-ia / -ava" while -ava had become a family in its own right, so -ava appeared
+// twice in the picker). English only — the Georgian labels are in Mkhedruli and
+// cannot be compared against Latin family identifiers.
+const enLocale = read('i18n/en.json')
+const labelled = Object.keys(enLocale).filter((key) => key.startsWith('suffix.')).map((key) => key.slice(7))
+// The categorical maps group several families under one id ("ia/ua/ava"), so a
+// label may legitimately name a category rather than a family. Anything that is
+// neither is a leftover.
+const groupIds = CATEGORIES.map((c) => c.id)
+const orphans = labelled.filter(
+  (f) => f !== 'other' && !suf.families.includes(f) && !groupIds.includes(f))
+ok(orphans.length === 0, 'every suffix label names a family or a category', orphans.join(',') || '')
+
+// And the reverse: a category the maps paint must have a label of its own.
+const unlabelledGroups = groupIds.filter((g) => !labelled.includes(g))
+ok(unlabelledGroups.length === 0, 'every map category has a locale entry', unlabelledGroups.join(',') || '')
+
+const merged = labelled.filter((f) => {
+  if (f === 'other' || !suf.families.includes(f)) return false
+  const parts = String(enLocale[`suffix.${f}`]).split('/').map((x) => x.trim().replace(/^-/, ''))
+  return parts.some((part) => part !== f && suf.families.includes(part))
+})
+ok(merged.length === 0, 'no suffix label absorbs another family', merged.join(',') || '')
+
+// Every family the data carries needs a locale entry, or the interface falls
+// back to rendering the raw key ("suffix.ov/ev/in") at the reader.
+const unlabelled = suf.families.filter((f) => !labelled.includes(f))
+ok(unlabelled.length === 0, 'every family has a locale entry', unlabelled.join(',') || '')
+
 // ---------------------------------------------------------------- suppression
 console.log('\nsuppression')
-const k = meta.suppression.k
 let leaks = 0, suppressedCells = 0, shapeBad = 0
 for (const [, payload] of Object.entries(buckets)) {
   for (const [, rec] of Object.entries(payload)) {
@@ -193,9 +293,26 @@ ok(keys(ka).every((x) => x in en), 'no Georgian key is missing from English')
 ok(keys(en).every((x) => typeof en[x] === 'string' && en[x]), 'English has no empty values')
 const filled = keys(ka).filter((x) => ka[x]).length
 console.log(`       ${filled}/${keys(ka).length} Georgian keys filled; the rest fall back to English`)
-const ph = (s) => (s.match(/\{(\w+)\}/g) ?? []).sort().join(',')
-const mismatched = keys(ka).filter((x) => ka[x] && ph(ka[x]) !== ph(en[x]))
-ok(mismatched.length === 0, 'placeholders match between locales', mismatched.join(', '))
+// An empty value is a translation waiting to be written; a MISSING key is one
+// nobody can write, because nothing tells the translator it exists. Name them.
+const awaiting = keys(en).filter((x) => !ka[x])
+if (awaiting.length) {
+  console.log(`       ${awaiting.length} awaiting Georgian: ${awaiting.slice(0, 5).join(', ')}${awaiting.length > 5 ? `, +${awaiting.length - 5} more` : ''}`)
+}
+// Two different situations, and only one of them is a fault.
+//
+// A placeholder in the Georgian that English does not define can never be
+// filled, so it renders literally as "{whatever}" — always a mistake, usually a
+// typo. A placeholder the Georgian LEAVES OUT is a translator's decision:
+// phrasing around it, or stating the value outright. Worth reporting, not worth
+// failing over.
+const ph = (s) => (String(s).match(/\{(\w+)\}/g) ?? [])
+const unknown = keys(ka).filter((x) => ka[x] && ph(ka[x]).some((p) => !ph(en[x]).includes(p)))
+ok(unknown.length === 0, 'no Georgian placeholder is undefined in English', unknown.join(', '))
+const omitted = keys(ka).filter((x) => ka[x] && ph(en[x]).some((p) => !ph(ka[x]).includes(p)))
+if (omitted.length) {
+  console.log(`       ${omitted.length} translation(s) drop a placeholder English supplies: ${omitted.join(', ')}`)
+}
 
 console.log(`\n${failures ? `${failures} FAILURE(S)` : 'all checks passed'}\n`)
 process.exit(failures ? 1 : 0)

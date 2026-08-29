@@ -4,7 +4,9 @@
 
 import { getLocale } from './data.js'
 
-const state = $state({ lang: 'en', dict: {}, fallback: {}, ready: false })
+// `fallback` is always English regardless of the active language — it is the
+// source of truth for text, not the default the reader sees.
+const state = $state({ lang: 'ka', dict: {}, fallback: {}, ready: false })
 
 export async function setLocale(lang) {
   if (!Object.keys(state.fallback).length) state.fallback = await getLocale('en')
