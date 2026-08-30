@@ -7,11 +7,26 @@
   <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
   <meta name="description" content="Geography of last names in Georgia: distribution by municipality and electoral district." />
   <!-- Noto Sans Georgian is self-hosted from src/fonts and declared in
-       src/app.css. Nothing here reaches the network: system fallbacks cover
-       Mkhedruli unreliably and the failure is silent. -->
+       src/app.css. Nothing the page NEEDS reaches the network: system fallbacks
+       cover Mkhedruli unreliably and the failure is silent. The single outbound
+       request is the analytics beacon at the end of the body, which is optional
+       by construction — see the note there. -->
 </head>
 <body>
   <div id="app"></div>
   <script type="module" src="/src/main.js"></script>
+
+  <!-- Cloudflare Web Analytics. Cookieless: sets no cookies, assigns no
+       cross-site identifier, and collects nothing about the individual reader —
+       which is the only basis on which it belongs in a project whose whole
+       pipeline suppresses counts below k.
+
+       It is the one third-party request the site makes, and the one request the
+       site works without. type="module" defers it, so it cannot block first
+       paint, and a failed load is silent. With no network the beacon simply does
+       not arrive while tiles, payload and fonts — all local — carry on. Keep
+       that property if this tag is ever swapped for another. -->
+  <script type="module" src="https://static.cloudflareinsights.com/beacon.min.js"
+          data-cf-beacon='{"token": "3c1ae33e933a4bbfb594c2e688acf26b"}'></script>
 </body>
 </html>

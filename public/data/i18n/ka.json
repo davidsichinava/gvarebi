@@ -25,7 +25,7 @@
   "control.geography": "გეოგრაფია",
   "control.metric": "მაჩვენებელი",
   "control.map_mode": "რუკა",
-  "source.voters": "მონაცემთა წყარო",
+  "source.voters": "ამომრჩეველთა რ-ნობა: ",
   "source.voters_long": "ამომრჩეველთა ერთიანი სიის წყარო, 2012 წ.",
   "source.book1997": "1997 წლის წიგნი",
   "source.book1997_long": "გვარების კომპენდიუმი, 1997",

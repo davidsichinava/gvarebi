@@ -78,6 +78,27 @@ console.log(`base applied: ${refs.filter((r) => r.startsWith(base)).length} asse
 // directories beginning with an underscore and slows every deploy down.
 writeFileSync(join(DIST, '.nojekyll'), '')
 
+// A custom domain lives in a CNAME file at the root of the published branch.
+// Setting the domain in the repository settings makes GitHub commit that file
+// to gh-pages — and this script force-pushes an ORPHAN commit, which would
+// delete it again, detaching the domain on the very next deploy with no error.
+//
+// So the domain belongs in public/CNAME, which vite copies into dist like any
+// other static file. Then it is part of every build and cannot be lost.
+const cnamePath = join(DIST, 'CNAME')
+if (existsSync(cnamePath)) {
+  const domain = readFileSync(cnamePath, 'utf8').trim()
+  console.log(`custom domain: ${domain}  (from public/CNAME)`)
+  if (base !== '/') {
+    console.error(`
+A custom domain serves from the root, but the base is ${base}.`)
+    console.error('Set BASE_PATH=/ for this deploy, or remove public/CNAME. Aborting.')
+    process.exit(1)
+  }
+} else {
+  console.log('custom domain: none (no public/CNAME) — publishing to the github.io address')
+}
+
 const count = (dir) => readdirSync(dir, { withFileTypes: true, recursive: true }).filter((e) => e.isFile()).length
 console.log(`\ndist: ${count(DIST)} files`)
 
