@@ -387,5 +387,19 @@
     .body { display: flex; flex-direction: column; }
     .side { overflow: visible; min-height: auto; }
     .canvas { min-height: 320px; }
+    /* .map carries overflow:hidden, and that switches off the automatic minimum
+       size a flex item otherwise gets from its own content. Stacked into a
+       column whose height .wrap bounds, the ~1100px table beside it wins the
+       shrink and the map collapses to a single pixel — the canvas underneath is
+       still its full 320px, just clipped out of sight, which is why the tab
+       looked like it had no map rather than a broken one. The min-height on
+       .canvas cannot save it: the parent is what collapses. An explicit height
+       with no shrink is what the region and surname views already do. */
+    .map { flex: 0 0 auto; height: 360px; }
+    /* Three Georgian labels do not fit 375px, and with no scroller the third is
+       unreachable. Same treatment the header nav gets. */
+    .tabs { overflow-x: auto; scrollbar-width: none; }
+    .tabs::-webkit-scrollbar { display: none; }
+    .tabs button { flex: 0 0 auto; white-space: nowrap; }
   }
 </style>

@@ -131,7 +131,16 @@
     .search { max-width: none; }
   }
   @media (max-width: 620px) {
-    /* the tabs are reachable from the views themselves; the search is not */
-    nav .tab { display: none; }
+    /* These tabs used to be display:none here, on the theory that the views
+       linked to one another. Only the region view does, and only from table
+       rows carrying no affordance that they are tappable; explore and method
+       were reachable from nowhere at all. The result was a phone stuck on
+       whichever view it first landed on. So the header wraps to a second row
+       and the tabs stay. Height stops being fixed to do it, which is safe
+       because --header is read by this component and nowhere else. */
+    header { flex-wrap: wrap; height: auto; min-height: var(--header);
+      padding: 7px 10px; row-gap: 4px; }
+    nav { flex: 0 0 100%; }
+    nav .tab { padding: 5px 7px; }
   }
 </style>

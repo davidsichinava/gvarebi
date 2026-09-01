@@ -72,6 +72,45 @@
   }
 
   const GEORGIA = [[39.9, 41.0], [46.8, 43.6]]
+
+  // fitBounds CONTAINS the box, so a portrait container is limited by width.
+  // Georgia is about 2.2:1, and fitting that sideways into a 350x430 phone card
+  // leaves the view spanning roughly 2.75x the country's latitude: the map opens
+  // on the South Caucasus with Georgia a thin band across the middle, and the
+  // tile pack — which covers Georgia only — 404s across the entire surround.
+  //
+  // So past a threshold, crop instead of fitting: take the sub-box of GEORGIA
+  // shaped like the container, filling it north to south and leaving the far
+  // east and west one pan away. The threshold matters as much as the crop.
+  // Measured aspect ratios: a phone card is 2.0-2.75x, a desktop map 1.37x. At
+  // 1.5 the phones crop and the desktop keeps the framing it already has, which
+  // shows the whole country and wastes little height doing it.
+  const BLEED_LIMIT = 1.5
+  const RAD = Math.PI / 180
+  const mercY = (lat) => Math.log(Math.tan(Math.PI / 4 + (lat * RAD) / 2))
+
+  function frameFor(node) {
+    const fit = { bounds: GEORGIA, fitBoundsOptions: { padding: 24 } }
+    const { width, height } = node?.getBoundingClientRect?.() ?? {}
+    if (!(width > 0 && height > 0)) return fit
+
+    const [[west, south], [east, north]] = GEORGIA
+    const x0 = west * RAD, x1 = east * RAD
+    const boxW = x1 - x0, boxH = mercY(north) - mercY(south)
+    if (!(boxW > 0 && boxH > 0)) return fit
+
+    const container = width / height
+    if (boxW / boxH <= container * BLEED_LIMIT) return fit
+
+    // Crop longitude around the centre. Latitude is already the short side, so
+    // it is the only axis there is anything to take from.
+    const half = (boxH * container) / 2
+    const cx = (x0 + x1) / 2
+    return {
+      bounds: [[(cx - half) / RAD, south], [(cx + half) / RAD, north]],
+      fitBoundsOptions: { padding: 0 },
+    }
+  }
   const DEBUG = typeof location !== 'undefined' && new URLSearchParams(location.search).has('debug')
 
   // WebGL2 can be unavailable — an old browser, a hardened profile, a headless
@@ -83,8 +122,7 @@
       map = new MapLibreMap({
         container: el,
         style,
-        bounds: GEORGIA,
-        fitBoundsOptions: { padding: 24 },
+        ...frameFor(el),
         attributionControl: { compact: true },
         dragRotate: false,
         pitchWithRotate: false,
