@@ -3,7 +3,7 @@
   import { t, name as areaName } from '../lib/i18n.svelte.js'
   import { getProfiles, getSuffix } from '../lib/data.js'
   import { suffixMix, rate } from '../lib/metrics.js'
-  import { familyLabel, familyLabelFull } from '../lib/suffix.js'
+  import { familyLabelFull } from '../lib/suffix.js'
   import { num, pct, times } from '../lib/format.js'
   import { SEQ } from '../lib/colors.js'
   import MapView from '../components/MapView.svelte'
@@ -13,7 +13,11 @@
 
   let geo = $derived(nav.geo)
   let list = $derived(areas[geo] ?? [])
-  let area = $derived(list.find((a) => a.id === nav.b) ?? list[0])
+  // No id in the route means the whole country, and that is what the tab opens
+  // on. This used to fall back to list[0], so the view always showed some
+  // municipality — a selection the reader never made and had no way to clear.
+  let area = $derived(nav.b == null ? null : (list.find((a) => a.id === nav.b) ?? null))
+  let nationwide = $derived(area == null)
 
   // The per-area rankings are precomputed — build.R writes them once instead of
   // the front end fetching all 256 agg buckets and walking 69,290 surnames on
@@ -43,16 +47,41 @@
     }
   })
 
+  // The national counterpart of a profile. Totals come from meta, which build.R
+  // wrote from the roll itself rather than being summed here; index.list arrives
+  // in rank order, so its head is the national most-common list. There is
+  // deliberately no national "distinctive" — a quotient measured against the
+  // country is a quotient against itself, and every value would be 1.
+  let nationalProfile = $derived.by(() => {
+    if (!index) return null
+    const total = meta.totals.voters
+    return {
+      common: index.list.slice(0, 20).map((entry) => ({
+        entry, count: entry.voters, rate: rate(entry.voters, total), lq: null, before: null,
+      })),
+      distinctive: [],
+      distinct: meta.totals.surnames,
+    }
+  })
+  let shown = $derived(nationwide ? nationalProfile : profile)
+
   // From the precomputed family tallies, not from the top-25 rankings: a mix
   // derived from the head of the list is not the mix of the area.
   // Every family, not a top-six with the rest lumped into "other" — the chart is
   // a list of bars now, so it has room for all of them.
   let mix = $derived(
-    suffixData && area ? suffixMix(suffixData[geo]?.[area.id], suffixData.national, 99) : []
+    !suffixData ? []
+      : nationwide ? suffixMix(suffixData.national, suffixData.national, 99)
+      : area ? suffixMix(suffixData[geo]?.[area.id], suffixData.national, 99) : []
   )
-  let top10share = $derived(
-    profiles && area && area.voters > 0 ? (profiles[area.id]?.top10 ?? 0) / area.voters : null
-  )
+  let top10share = $derived.by(() => {
+    if (nationwide) {
+      const total = meta.totals.voters
+      if (!total || !index) return null
+      return index.list.slice(0, 10).reduce((sum, e) => sum + e.voters, 0) / total
+    }
+    return profiles && area && area.voters > 0 ? (profiles[area.id]?.top10 ?? 0) / area.voters : null
+  })
   let rollChange = $derived(
     area?.voters_1997 ? (area.voters - area.voters_1997) / area.voters_1997 : null
   )
@@ -62,6 +91,10 @@
   let maxShare = $derived(Math.max(0.01, ...mix.map((m) => Math.max(m.share, m.national))))
 
   let tab = $state('distinctive')
+  // Nationwide has no distinctive list, so a reader arriving with that tab
+  // already selected would meet an empty table instead of the country's top
+  // surnames. The stored choice is kept for when they pick somewhere again.
+  let activeTab = $derived(nationwide ? 'common' : tab)
 
   const areaByCode = $derived(new Map(list.map((a) => [a.code, a])))
   let mapRows = $derived(list.map((a) => ({ area: a, suppressed: false, value: a.id === area?.id ? 1 : 0 })))
@@ -84,8 +117,8 @@
     </div>
 
     <div class="tiles">
-      <div class="card pad"><div class="lbl">{t('region.voters_on_roll')}</div><div class="big num">{num(area?.voters)}</div></div>
-      <div class="card pad"><div class="lbl">{t('region.distinct_surnames')}</div><div class="big num">{num(profile?.distinct)}</div></div>
+      <div class="card pad"><div class="lbl">{t('region.voters_on_roll')}</div><div class="big num">{num(nationwide ? meta.totals.voters : area?.voters)}</div></div>
+      <div class="card pad"><div class="lbl">{t('region.distinct_surnames')}</div><div class="big num">{num(shown?.distinct)}</div></div>
       <div class="card pad"><div class="lbl">{t('region.top10_share')}</div><div class="big num">{top10share == null ? '—' : (top10share * 100).toFixed(1) + '%'}</div></div>
       {#if SHOW_1997}
         <div class="card pad"><div class="lbl">{t('region.since_1997')}</div><div class="big num" class:down={rollChange < 0}>{pct(rollChange)}</div></div>
@@ -102,10 +135,14 @@
       <div class="bars">
         {#each mix as m}
           <div class="bar" title="{familyLabelFull(m.suffix, t)} · {(m.share * 100).toFixed(1)}% {t('region.here_vs_national', { national: (m.national * 100).toFixed(1) })}">
-            <span class="bname">{familyLabel(m.suffix, t)}</span>
+            <span class="bname">{familyLabelFull(m.suffix, t)}</span>
             <span class="btrack">
               <i class="bfill" style="width:{Math.min(100, (m.share / maxShare) * 100)}%"></i>
-              <i class="bnat" style="left:{Math.min(100, (m.national / maxShare) * 100)}%"></i>
+              <!-- Against the country itself the tick would sit exactly on the
+                   end of every bar, which reads as a rendering fault. -->
+              {#if !nationwide}
+                <i class="bnat" style="left:{Math.min(100, (m.national / maxShare) * 100)}%"></i>
+              {/if}
             </span>
             <span class="bval num">{(m.share * 100).toFixed(1)}%</span>
           </div>
@@ -116,25 +153,31 @@
 
   <section class="main scroll">
     <div class="head">
-      <div class="crumb tiny mut">{t('region.breadcrumb_root')}{area?.parent_en ? ` › ${area.parent_en}` : ''} ›</div>
-      <h1>{areaName(area)}</h1>
+      <div class="crumb tiny mut">
+        {#if nationwide}{t('region.breadcrumb_root')}
+        {:else}<button class="crumblink" onclick={() => go({ view: 'region', a: geo, b: null })}
+          >{t('region.breadcrumb_root')}</button>{area?.parent_en ? ` › ${area.parent_en}` : ''} ›{/if}
+      </div>
+      <h1>{nationwide ? t('region.breadcrumb_root') : areaName(area)}</h1>
     </div>
 
     <div class="tabs">
-      <button class:on={tab === 'common'} onclick={() => (tab = 'common')}>{t('region.most_common')}</button>
-      <button class:on={tab === 'distinctive'} onclick={() => (tab = 'distinctive')}>{t('region.most_distinctive')}</button>
-      {#if SHOW_1997}
-        <button class:on={tab === 'movers'} onclick={() => (tab = 'movers')}>{t('region.movers')}</button>
+      <button class:on={activeTab === 'common'} onclick={() => (tab = 'common')}>{t('region.most_common')}</button>
+      {#if !nationwide}
+        <button class:on={activeTab === 'distinctive'} onclick={() => (tab = 'distinctive')}>{t('region.most_distinctive')}</button>
+        {#if SHOW_1997}
+          <button class:on={activeTab === 'movers'} onclick={() => (tab = 'movers')}>{t('region.movers')}</button>
+        {/if}
       {/if}
     </div>
 
     <p class="note tiny mut">
-      {tab === 'common' ? t('region.most_common_note')
-        : tab === 'distinctive' ? t('region.most_distinctive_note')
+      {activeTab === 'common' ? t('region.most_common_note')
+        : activeTab === 'distinctive' ? t('region.most_distinctive_note')
         : t('region.movers_note')}
     </p>
 
-    {#if !profile}
+    {#if !shown}
       <p class="tiny mut">…</p>
     {:else}
       <table>
@@ -144,11 +187,11 @@
             <th>{t('table.surname')}</th>
             <th class="r">{t('table.voters')}</th>
             <th class="r">{t('table.per_1000')}</th>
-            <th class="r">{tab === 'movers' ? t('source.change') : t('table.concentration')}</th>
+            <th class="r">{activeTab === 'movers' ? t('source.change') : t('table.concentration')}</th>
           </tr>
         </thead>
         <tbody>
-          {#each (tab === 'common' ? profile.common : tab === 'distinctive' ? profile.distinctive : [...profile.common].sort((a, b) => {
+          {#each (activeTab === 'common' ? shown.common : activeTab === 'distinctive' ? shown.distinctive : [...shown.common].sort((a, b) => {
             const ca = a.before ? (a.count - a.before) / a.before : -Infinity
             const cb = b.before ? (b.count - b.before) / b.before : -Infinity
             return cb - ca
@@ -159,7 +202,7 @@
               <td class="r num">{num(r.count)}</td>
               <td class="r num">{num(r.rate, 1)}</td>
               <td class="r num"><b>
-                {#if tab === 'movers'}
+                {#if activeTab === 'movers'}
                   {r.before ? pct((r.count - r.before) / r.before) : '—'}
                 {:else}
                   {r.lq == null ? '—' : times(r.lq)}
@@ -190,9 +233,17 @@
   .big { font-size: 20px; font-weight: 600; margin-top: 2px; }
   .big.down { color: var(--warm); }
   .bars { display: flex; flex-direction: column; gap: 3px; margin-top: 8px; }
-  .bar { display: grid; grid-template-columns: 96px minmax(0, 1fr) 42px;
+  /* The label column was 96px, which clipped every family naming more than one
+     ending — the chart is a list of suffixes, so a suffix cut to "-ov / -ev …"
+     is the one thing it must not do. */
+  .bar { display: grid; grid-template-columns: 140px minmax(0, 1fr) 42px;
     align-items: center; gap: 8px; min-height: 15px; }
-  .bname { font-size: 11px; line-height: 1.35; color: var(--ink2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* Full names, wrapped. familyLabel's ellipsis exists for the explore picker,
+     which is one line wide; here the whole point of the row is which endings the
+     family covers, so cutting them defeats the chart. It also only ever fired in
+     English: elide splits on " / ", and the Georgian locale writes these without
+     spaces, so ka overflowed silently while en showed a tidy "…". */
+  .bname { font-size: 11px; line-height: 1.35; color: var(--ink2); overflow-wrap: anywhere; }
   .btrack { position: relative; height: 9px; background: var(--sunk); border-radius: 2px; }
   .bfill { position: absolute; inset: 0 auto 0 0; background: var(--accent); border-radius: 2px; display: block; }
   /* the same family's national share, so the bar has something to be read against */
@@ -200,6 +251,9 @@
   .bval { font-size: 10.5px; line-height: 1.35; color: var(--ink2); text-align: right; }
   .head h1 { font-size: 24px; font-weight: 600; margin: 2px 0 0; }
   .crumb { margin-bottom: 2px; }
+  .crumblink { background: none; border: 0; padding: 0; font: inherit; color: inherit;
+    cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+  .crumblink:hover { color: var(--ink); }
   .tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--rule); }
   .tabs button { background: none; border: 0; padding: 8px 12px; font-size: 12.5px; color: var(--ink2);
     cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; }

@@ -395,7 +395,14 @@
        looked like it had no map rather than a broken one. The min-height on
        .canvas cannot save it: the parent is what collapses. An explicit height
        with no shrink is what the region and surname views already do. */
-    .map { flex: 0 0 auto; height: 360px; }
+    /* No fixed height. The suffix tab stacks a caption, a nineteen-button family
+       picker and a relief table into this same section, so pinning it to 360px
+       meant the picker ate the map and the canvas was squeezed to a sliver. All
+       this element ever needed was to stop shrinking — overflow:hidden had
+       switched off its content floor, and flex-shrink:0 alone restores it. The
+       section now grows to fit, so the canvas keeps its 320px however far down
+       the picker pushes it. */
+    .map { flex: 0 0 auto; }
     /* Three Georgian labels do not fit 375px, and with no scroller the third is
        unreachable. Same treatment the header nav gets. */
     .tabs { overflow-x: auto; scrollbar-width: none; }

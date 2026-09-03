@@ -133,7 +133,7 @@
       map.touchZoomRotate?.disableRotation?.()
       map.addControl(new NavigationControl({ showCompass: false }), 'top-right')
       map.on('error', (e) => console.warn('[map]', e?.error?.message ?? e))
-      map.on('load', () => { addHatchImage(); ready = true })
+      map.on('load', () => { addHatchImage(); collapseAttribution(); ready = true })
       // ?debug exposes the map for the inspector in tools/ and for the console.
       if (DEBUG) window.__map = map
     } catch (e) {
@@ -209,18 +209,36 @@
     })
   })
 
+  // maplibre paints its compact attribution expanded on first load, which on a
+  // 350px map is a bar of source credits across the bottom. Collapse it to the
+  // (i) the control already provides: one tap still shows the same text.
+  function collapseAttribution() {
+    el?.querySelector('.maplibregl-ctrl-attrib')?.classList.remove('maplibregl-compact-show')
+  }
+
+  // A touch screen has no hover, so the tooltip a mouse reader gets for free
+  // never appeared at all: the first tap went straight through to the area's own
+  // page, and the information the map holds was unreachable on a phone. Coarse
+  // pointers therefore get two steps — tap once to read the place, tap the same
+  // place again to open it. Fine pointers keep the single click, because by then
+  // they have already read the tooltip on the way to it.
+  const coarsePointer = () => window.matchMedia?.('(hover: none)').matches === true
+
   function wireInteraction() {
-    const popup = new Popup({ closeButton: false, closeOnClick: false, offset: 8 })
+    const popup = new Popup({ closeButton: coarsePointer(), closeOnClick: false, offset: 8 })
     let hovered = null
+    let previewed = null
+    const tipFor = (f, lngLat) => {
+      const row = rows.find((r) => r.area.code === f.id)
+      popup.setLngLat(lngLat).setHTML(tooltip ? tooltip(row, f) : basicTip(row, f)).addTo(map)
+    }
+
     map.on('mousemove', 'areas-fill', (e) => {
       const f = e.features?.[0]
       if (!f) return
       map.getCanvas().style.cursor = 'pointer'
-      if (hovered !== f.id) {
-        hovered = f.id
-        const row = rows.find((r) => r.area.code === f.id)
-        popup.setLngLat(e.lngLat).setHTML(tooltip ? tooltip(row, f) : basicTip(row, f)).addTo(map)
-      } else popup.setLngLat(e.lngLat)
+      if (hovered !== f.id) { hovered = f.id; tipFor(f, e.lngLat) }
+      else popup.setLngLat(e.lngLat)
     })
     map.on('mouseleave', 'areas-fill', () => {
       map.getCanvas().style.cursor = ''
@@ -229,7 +247,18 @@
     })
     map.on('click', 'areas-fill', (e) => {
       const f = e.features?.[0]
-      if (f) onpick(f.id)
+      if (!f) return
+      if (coarsePointer() && previewed !== f.id) { previewed = f.id; tipFor(f, e.lngLat); return }
+      previewed = null
+      onpick(f.id)
+    })
+    // Tapping the sea or a neighbour clears the preview, so the next tap on an
+    // area behaves like a first tap rather than opening it unannounced.
+    map.on('click', (e) => {
+      if (!map.getLayer('areas-fill')) return
+      if (map.queryRenderedFeatures(e.point, { layers: ['areas-fill'] }).length) return
+      previewed = null
+      popup.remove()
     })
   }
 

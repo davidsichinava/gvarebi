@@ -31,12 +31,12 @@
 
   function goTab(view) {
     if (view === 'surname') go({ view: 'surname', a: nav.view === 'surname' ? nav.a : (index?.list[0]?.ka ?? '') })
-    else if (view === 'region') go({ view: 'region', a: nav.geo, b: nav.view === 'region' ? nav.b : firstArea() })
+    // No area id: the geography tab opens on the whole country and narrows only
+    // when the reader picks somewhere. It used to jump to whichever municipality
+    // happened to be first in the list, which read as a selection nobody made.
+    else if (view === 'region') go({ view: 'region', a: nav.geo, b: nav.view === 'region' ? nav.b : null })
     else go({ view })
   }
-  let firstAreaId = $state(null)
-  function firstArea() { return firstAreaId ?? 12 }
-  export function setFirstArea(id) { firstAreaId = id }
 </script>
 
 <header>

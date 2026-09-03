@@ -27,7 +27,15 @@ function parse() {
 
   let view = 'home', a = null, b = null
   if (seg[0] === 's') { view = 'surname'; a = decodeURIComponent(seg[1] || '') }
-  else if (seg[0] === 'r') { view = 'region'; a = seg[1] || 'mun'; b = Number(seg[2]) }
+  else if (seg[0] === 'r') {
+    view = 'region'
+    a = seg[1] || 'mun'
+    // /r/mun with no id is the nationwide view, and it is what the tab lands on.
+    // An absent or unparseable id has to read as "nothing selected" rather than
+    // NaN, which toHash would otherwise write straight back into the URL.
+    const id = Number(seg[2])
+    b = Number.isFinite(id) ? id : null
+  }
   else if (seg[0] === 'explore') view = 'explore'
   else if (seg[0] === 'method') view = 'method'
 
@@ -57,7 +65,7 @@ function parse() {
 function toHash(s) {
   let path = '/'
   if (s.view === 'surname') path = `/s/${encodeURIComponent(s.a)}`
-  else if (s.view === 'region') path = `/r/${s.geo}/${s.b}`
+  else if (s.view === 'region') path = s.b == null ? `/r/${s.geo}` : `/r/${s.geo}/${s.b}`
   else if (s.view === 'explore') path = '/explore'
   else if (s.view === 'method') path = '/method'
 
