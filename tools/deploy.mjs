@@ -14,11 +14,13 @@
 // pointer files rather than their contents.
 import { execFileSync } from 'node:child_process'
 import { existsSync, writeFileSync, readFileSync, rmSync, readdirSync } from 'node:fs'
-import { join, dirname } from 'node:path'
+import { join, dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
-const DIST = join(ROOT, 'dist')
+// Kept in step with vite.config.js: BUILD_DIR moves the whole build off the
+// Dropbox tree, whose open handles make emptying dist fail unpredictably.
+const DIST = process.env.BUILD_DIR ? resolve(process.env.BUILD_DIR) : join(ROOT, 'dist')
 const DRY = process.argv.includes('--dry-run')
 const BRANCH = process.env.DEPLOY_BRANCH || 'gh-pages'
 

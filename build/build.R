@@ -511,9 +511,12 @@ if (!have_names) {
   # "NA" is not a family, it is an unclassified surname.
   nsuf[is.na(suffix_family) | suffix_family %in% c("NA", ""), suffix_family := "other"]
 
-  # Gender is a recorded field with three states. "unknown" is a real answer
-  # about a real person rather than a gap to be imputed away, so it is published
-  # as itself instead of being folded into one of the other two.
+  # Gender is NOT a field in the roll: it is matched to each name from a public
+  # name-to-gender list, so it describes the name and not the person. That is why
+  # no name is ever used for both, why "unknown" is unknown for every bearer of a
+  # name rather than for particular people, and why nothing here can measure how
+  # a name is used across genders — the answer was fixed before the data arrived.
+  # "unknown" is still published as itself rather than imputed away.
   GENDERS <- c("male", "female", "unknown")
   bad_g <- setdiff(unique(c(ncoh$gender, nare$gender, nsuf$gender)), GENDERS)
   if (length(bad_g)) stop("unexpected gender value(s): ", paste(bad_g, collapse = ", "))
