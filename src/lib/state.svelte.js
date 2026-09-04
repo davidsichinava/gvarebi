@@ -27,6 +27,7 @@ function parse() {
 
   let view = 'home', a = null, b = null
   if (seg[0] === 's') { view = 'surname'; a = decodeURIComponent(seg[1] || '') }
+  else if (seg[0] === 'n') { view = 'name'; a = decodeURIComponent(seg[1] || '') }
   else if (seg[0] === 'r') {
     view = 'region'
     a = seg[1] || 'mun'
@@ -65,6 +66,7 @@ function parse() {
 function toHash(s) {
   let path = '/'
   if (s.view === 'surname') path = `/s/${encodeURIComponent(s.a)}`
+  else if (s.view === 'name') path = s.a ? `/n/${encodeURIComponent(s.a)}` : '/n'
   else if (s.view === 'region') path = s.b == null ? `/r/${s.geo}` : `/r/${s.geo}/${s.b}`
   else if (s.view === 'explore') path = '/explore'
   else if (s.view === 'method') path = '/method'

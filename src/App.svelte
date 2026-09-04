@@ -7,6 +7,7 @@
   import SurnameView from './views/SurnameView.svelte'
   import RegionView from './views/RegionView.svelte'
   import ExploreView from './views/ExploreView.svelte'
+  import NamesView from './views/NamesView.svelte'
   import MethodView from './views/MethodView.svelte'
 
   let meta = $state(null)
@@ -39,7 +40,7 @@
     <div class="boot mut">…</div>
   {:else}
     <Header {index} />
-    {#if nav.view === 'surname' || nav.view === 'region'}
+    {#if nav.view === 'surname' || nav.view === 'region' || nav.view === 'name'}
       <ControlRail showMetric={nav.view === 'surname'} />
     {/if}
 
@@ -47,6 +48,8 @@
       <SurnameView {index} {areas} {meta} />
     {:else if nav.view === 'region'}
       <RegionView {index} {areas} {meta} />
+    {:else if nav.view === 'name'}
+      <NamesView {areas} {meta} />
     {:else if nav.view === 'explore'}
       <ExploreView {index} {areas} {meta} />
     {:else if nav.view === 'method'}

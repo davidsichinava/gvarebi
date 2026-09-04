@@ -21,6 +21,12 @@
     <h2>{t('source.voters')}</h2>
     <p><b>{t('method.source_voters')}</b></p>
 
+    <h2>{t('method.names_title')}</h2>
+    <p>{t('method.names_source')}</p>
+    <p>{t('method.names_normalise')}</p>
+    <p>{t('method.names_cohort')}</p>
+    <p>{t('method.names_suppression', { k: meta.suppression.k })}</p>
+
     <h2>{t('method.metrics')}</h2>
 	<p><b>{t('method.metrics_description')}</b></p>
     <pre>{t('method.metrics_formula')}</pre>

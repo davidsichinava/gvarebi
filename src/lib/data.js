@@ -26,6 +26,46 @@ export const getProfiles = (geo) => json(`profiles/${geo}.json`)
 /** Surname counts rolled up by suffix family, per area, plus national totals. */
 export const getSuffix = () => json('suffix.json')
 export const getKdeBucket = (b) => json(`kde/${b}.json`).catch(() => ({}))
+
+/** First names. Three marginals, never a cube — see the first-names stage of
+ *  build/build.R for why time and place are not published together. */
+/** Shared denominators for every curve — small, fetched once. */
+export const getNameCohort = () => json("names/cohort.json")
+/** One bucket of per-name series. Sharded like the surname agg buckets so that
+ *  opening one name does not pull the other forty-three thousand. */
+export const getNameCohortBucket = (b) => json(`names/cohort/${b}.json`)
+export const getNameArea = (geo) => json(`names/area/${geo}.json`)
+export const getNameSuffix = () => json("names/suffix.json")
+
+let namesPromise = null
+/** The first-name index. No transliteration exists for these — the roll gives
+ *  only the Georgian form — so search runs on Mkhedruli alone. */
+export function getNames() {
+  if (!namesPromise) {
+    namesPromise = json("names/index.json").then(({ columns, rows }) => {
+      const at = Object.fromEntries(columns.map((c, i) => [c, i]))
+      const list = rows.map((r) => ({
+        ka: r[at.ka], gender: r[at.gender], voters: r[at.total],
+        rank: r[at.rank], peak: r[at.peak_year], bucket: r[at.bucket],
+      }))
+      return { list, byKa: new Map(list.map((n) => [n.ka, n])) }
+    })
+  }
+  return namesPromise
+}
+
+/** Prefix-first, same shape as the surname search but one script. */
+export function searchNames(names, query, limit = 40) {
+  const q = query.trim().toLowerCase()
+  if (!q) return names.list.slice(0, limit)
+  const starts = [], contains = []
+  for (const n of names.list) {
+    if (n.ka.startsWith(q)) starts.push(n)
+    else if (n.ka.includes(q)) contains.push(n)
+    if (starts.length >= limit) break
+  }
+  return [...starts, ...contains].slice(0, limit)
+}
 export const getLocale = (lang) => json(`i18n/${lang}.json`)
 
 let indexPromise = null

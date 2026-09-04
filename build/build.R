@@ -27,6 +27,20 @@ CFG <- list(
                         bbox = c(39.90, 41.00, 46.80, 43.60)),  # W, S, E, N
   bandwidth_km   = 8,
   kde_floor      = 0.02,    # relative to the surname's own peak
+  # k applies to the GEOGRAPHIC marginal and nothing else. What protects people
+  # here is not k on every table, it is that the marginals are never crossed:
+  # name x year carries no place, name x area carries no year, and no cube joins
+  # them. Location is the identifying axis - four bearers of a rare name in one
+  # district is close to naming them - so that cell keeps k. A national count of
+  # people born in a given year does not narrow to a place, and the surname
+  # index already publishes all 64,172 surnames including singletons, so the
+  # cohort curve is the same grain of disclosure the atlas already makes.
+  # Set this TRUE to put k back on every table.
+  k_all_tables   = FALSE,
+  # The roll has a date of its own, which is not the build date. Until now
+  # sources.voters.date carried Sys.Date(), so the payload described a 2012
+  # list as though it were current.
+  source_date    = "2012",
   version        = format(Sys.Date())
 )
 
@@ -453,6 +467,241 @@ for (b in names(kde_bucket))
 say("kde: %d surnames across %d buckets",
     sum(lengths(kde_bucket)), length(kde_bucket))
 
+# ----------------------------------------------------------------- first names
+# Three aggregates, kept deliberately as MARGINALS rather than one cube:
+#
+#   names_cohort.csv        first_name x gender x birth_year   (national)
+#   names_area.csv          first_name x gender x precinct     (all years)
+#   first_name_by_suffix    first_name x gender x surname suffix family
+#
+# Crossing time with place would drive almost every cell under k - 47,175 names
+# across 102 years and 75 districts is mostly ones. Each marginal on its own
+# publishes at the same threshold as the surname side, and answers nearly every
+# question worth asking. A time-and-place view, if ever wanted, needs its own
+# coarse aggregate (decades x districts), not a finer version of these.
+#
+# PROVENANCE. This is the 2012 unified roll, so birth years stop at 1994 and
+# nobody born later appears on it. Everything here therefore describes "people
+# registered to vote in 2012", never "children named in year X": older cohorts
+# are thinned by mortality and emigration, and there is no cohort at all for
+# anyone who came of age after 2012. The method page says so, and no view built
+# on this may imply otherwise.
+
+names_src <- c(cohort = "names_cohort.csv", area = "names_area.csv",
+               suffix = "first_name_by_suffix.csv")
+have_names <- all(file.exists(file.path(IN, names_src)))
+
+if (!have_names) {
+  say("first names: input files absent, stage skipped")
+} else {
+  ncoh <- fread(file.path(IN, names_src[["cohort"]]), encoding = "UTF-8")
+  nare <- fread(file.path(IN, names_src[["area"]]),   encoding = "UTF-8")
+  nsuf <- fread(file.path(IN, names_src[["suffix"]]), encoding = "UTF-8")
+  say("first names: %s cohort rows, %s area rows, %s suffix rows",
+      format(nrow(ncoh), big.mark = ","), format(nrow(nare), big.mark = ","),
+      format(nrow(nsuf), big.mark = ","))
+
+  # -- clean, per the decisions taken when these files were triaged -----------
+  # Nine voters carry a birth year before 1900, the earliest 1880, which is an
+  # age of 132 on a 2012 roll. They are data entry errors, but discarding people
+  # is worse than folding them, so they join the earliest real cohort.
+  pre1900 <- ncoh[birth_year < 1900L, sum(count)]
+  ncoh[birth_year < 1900L, birth_year := 1900L]
+
+  # "NA" is not a family, it is an unclassified surname.
+  nsuf[is.na(suffix_family) | suffix_family %in% c("NA", ""), suffix_family := "other"]
+
+  # Gender is a recorded field with three states. "unknown" is a real answer
+  # about a real person rather than a gap to be imputed away, so it is published
+  # as itself instead of being folded into one of the other two.
+  GENDERS <- c("male", "female", "unknown")
+  bad_g <- setdiff(unique(c(ncoh$gender, nare$gender, nsuf$gender)), GENDERS)
+  if (length(bad_g)) stop("unexpected gender value(s): ", paste(bad_g, collapse = ", "))
+
+  miss_p <- setdiff(unique(nare$precinct_id), precincts$precinct_id)
+  if (length(miss_p))
+    stop(length(miss_p), " precinct id(s) in names_area.csv are absent from precincts.csv")
+
+  # -- normalise the nominative -ი -------------------------------------------
+  # Georgian marks the nominative singular of a consonant stem with a final -ი,
+  # so one person reaches the roll as დავით or დავითი depending on which form the
+  # clerk typed. Folding them together moves 9% of the roll onto the right name.
+  # Two rules keep the merge honest:
+  #
+  #   1. Conditional, never blanket. Fold X and Xი only when the roll holds BOTH.
+  #      Stripping every trailing -ი invents stems nobody writes (გიორგი ->
+  #      გიორგ) and can collide two genuinely different names.
+  #   2. Genders must agree. ანა is 20,982 women; ანაი is one man. A pair that
+  #      disagrees on gender is two names, not two spellings of one — without
+  #      this guard 544 more pairs merge and 542 names end up carrying both
+  #      genders, contradicting a field the roll actually recorded.
+  #
+  # The canonical spelling is whichever one more people carry, not the citation
+  # form: ეთერი outnumbers ეთერ, so that pair folds the other way.
+  NOM_I <- "ი"
+  name_totals <- ncoh[, .(n = sum(count), gender = gender[1]), by = .(name = first_name)]
+  name_totals[, name := trimws(name)]
+  have_names <- name_totals$name
+  name_totals[, stem := fifelse(endsWith(name, NOM_I) & nchar(name) > 2L,
+                                substr(name, 1L, nchar(name) - 1L), NA_character_)]
+  name_totals[, paired := !is.na(stem) & stem %chin% have_names]
+
+  npairs <- merge(
+    name_totals[paired == TRUE, .(long = name, short = stem, n_long = n, g_long = gender)],
+    name_totals[, .(short = name, n_short = n, g_short = gender)],
+    by = "short")
+  npairs[, keep := g_long == g_short]
+  npairs[, canon := fifelse(n_long >= n_short, long, short)]
+
+  nmerged <- npairs[keep == TRUE]
+  nmap <- rbindlist(list(
+    data.table(from = nmerged$long,  to = nmerged$canon),
+    data.table(from = nmerged$short, to = nmerged$canon)))
+  nuntouched <- setdiff(have_names, nmap$from)
+  nmap <- unique(rbindlist(list(nmap, data.table(from = nuntouched, to = nuntouched))))
+
+  NAMES_BEFORE <- nrow(name_totals)
+  folded <- nmap[from != to]
+  MOVED <- sum(name_totals[name %chin% folded$from]$n)
+
+  nlookup <- setNames(nmap$to, nmap$from)
+  ncoh[, first_name := unname(nlookup[trimws(first_name)])]
+  nare[, first_name := unname(nlookup[trimws(first_name)])]
+  nsuf[, first_name := unname(nlookup[trimws(first_name)])]
+
+  # Every marginal gets the SAME map and is re-aggregated, or the three files
+  # stop agreeing on which names exist — which is exactly what check-data.mjs
+  # asserts when it compares their name sets.
+  ncoh <- ncoh[, .(count = sum(count)), by = .(first_name, gender, birth_year)]
+  nare <- nare[, .(count = sum(count)), by = .(first_name, gender, precinct_id)]
+  nsuf <- nsuf[, .(n = sum(n)), by = .(first_name, gender, suffix_family)]
+
+  gclash <- unique(ncoh[, .(first_name, gender)])[, .(k = .N), by = first_name][k > 1L]
+  if (nrow(gclash))
+    stop(nrow(gclash), " name(s) carry two genders after normalising — the guard failed")
+
+  say("first names: folded %s spellings, %s -> %s names, %s voters moved (%.1f%%); %s pairs refused on gender",
+      format(nrow(folded), big.mark = ","), format(NAMES_BEFORE, big.mark = ","),
+      format(uniqueN(nmap$to), big.mark = ","), format(MOVED, big.mark = ","),
+      100 * MOVED / sum(name_totals$n), format(nrow(npairs[keep == FALSE]), big.mark = ","))
+
+  # -- index -----------------------------------------------------------------
+  nidx <- ncoh[, .(total = sum(count)), by = .(first_name, gender)]
+  peak <- ncoh[, .(peak_year = birth_year[which.max(count)]), by = .(first_name, gender)]
+  nidx <- merge(nidx, peak, by = c("first_name", "gender"))
+  setorder(nidx, -total, first_name)
+  nidx[, rank := .I]
+  # Same hash the surname index uses, for the same reason: the cohort series are
+  # 3.3 MB in one file, and a reader who opens one name should not fetch the
+  # other 43,756. The app never computes this — it reads bucket from the index.
+  nidx[, bucket := bucket_of(first_name)]
+
+  # Everything downstream keys on the name alone: the index is one row per name,
+  # the route is /n/<name>, and the area and suffix rollups group without gender
+  # because on this roll a name has exactly one. That is a property of the DATA,
+  # not a law — and if it ever stops holding, those rollups would quietly add men
+  # and women together while the index grew a second row the front end could not
+  # address. Cheaper to refuse the build than to publish that.
+  if (uniqueN(nidx$first_name) != nrow(nidx))
+    stop(nrow(nidx) - uniqueN(nidx$first_name),
+         " name(s) carry more than one gender; the area and suffix rollups assume one")
+
+  # Column-wise, not a row loop: nidx[i] allocates a fresh one-row data.table per
+  # name, which costs minutes across forty thousand of them.
+  nidx_cols <- as.list(nidx[, .(first_name, gender, total, rank, peak_year, bucket)])
+  write_json_file(list(
+    columns = c("ka", "gender", "total", "rank", "peak_year", "bucket"),
+    rows = .mapply(function(...) unname(list(...)), nidx_cols, NULL)
+  ), file.path(OUT, "names/index.json"))
+
+  # -- cohorts ---------------------------------------------------------------
+  # The denominator every temporal chart needs. Cohort sizes on this roll are
+  # wildly uneven - the 1990s birth collapse alone would swamp any naming signal
+  # - so a share is the only honest unit, and a share needs this.
+  yr_tot <- ncoh[, .(n = sum(count)), by = .(birth_year, gender)]
+  setorder(yr_tot, birth_year)
+  years <- sort(unique(ncoh$birth_year))
+  totals <- lapply(GENDERS, function(g) {
+    d <- yr_tot[gender == g]; named(d$birth_year, d$n) })
+  names(totals) <- GENDERS
+
+  # Per-name series, suppressed cell by cell like everything else, and limited
+  # to names big enough to survive that suppression. A name held by fifty people
+  # across forty years is a handful of ones per decade: every cell would be
+  # withheld, and an all-gaps curve says nothing while inviting the reader to
+  # fill it in themselves.
+  ser <- ncoh[, .(n = sum(count)), by = .(first_name, gender, birth_year)]
+  ser_all <- nrow(ser)
+  if (CFG$k_all_tables) ser <- ser[n >= CFG$k]
+  setorder(ser, first_name, birth_year)
+  sp <- split(ser, by = "first_name", keep.by = FALSE)
+  # I() or jsonlite auto_unbox collapses a one-element vector to a scalar, and a
+  # name with a single published year would arrive as y: 1974 rather than
+  # y: [1974]. The suppressed-id lists hit exactly this and it is why pick_ids
+  # wraps too; freeing the cohort made it common rather than rare.
+  series <- lapply(sp, function(d) list(y = I(d$birth_year), n = I(d$n)))
+
+  # The denominators are shared by every curve and tiny, so they stay in one
+  # file. The series are not: sharded on the index bucket, opening one name
+  # fetches a few hundred neighbours instead of all forty-three thousand.
+  write_json_file(list(years = years, totals = totals),
+                  file.path(OUT, "names/cohort.json"))
+  nbmap <- setNames(nidx$bucket, nidx$first_name)
+  for (b in sort(unique(nidx$bucket))) {
+    keep <- names(series)[nbmap[names(series)] == b]
+    write_json_file(series[keep], file.path(OUT, sprintf("names/cohort/%s.json", b)))
+  }
+  say("first names: %d cohort buckets", uniqueN(nidx$bucket))
+
+  # -- geography -------------------------------------------------------------
+  nare <- merge(nare, precincts[, .(precinct_id, mun_id, dis_id)], by = "precinct_id")
+  name_area <- function(level_col, area_dt) {
+    a <- nare[, .(n = sum(count)), by = c("first_name", level_col)]
+    setnames(a, level_col, "area_id")
+    a <- a[n >= CFG$k & area_id %in% area_dt$area_id]
+    setorder(a, first_name, area_id)
+    s <- split(a, by = "first_name", keep.by = FALSE)
+    list(map = lapply(s, function(d) named(d$area_id, d$n)), kept = nrow(a))
+  }
+  am <- name_area("mun_id", mun)
+  ad <- name_area("dis_id", dis)
+  write_json_file(am$map, file.path(OUT, "names/area/mun.json"))
+  write_json_file(ad$map, file.path(OUT, "names/area/dis.json"))
+
+  # -- first name x surname suffix -------------------------------------------
+  # Whether an -ia/-ua/-ava family draws on a different first-name repertoire
+  # than a -dze one. This is the one place the two halves of the atlas touch,
+  # and it touches them at family level, never at individual surname level.
+  nsx <- nsuf[, .(n = sum(n)), by = .(first_name, suffix_family)]
+  if (CFG$k_all_tables) nsx <- nsx[n >= CFG$k]
+  setorder(nsx, first_name, -n)
+  sfx_nat <- nsuf[, .(n = sum(n)), by = suffix_family]
+  setorder(sfx_nat, -n)
+  sx <- split(nsx, by = "first_name", keep.by = FALSE)
+  write_json_file(list(
+    families = sfx_nat$suffix_family,
+    national = named(sfx_nat$suffix_family, sfx_nat$n),
+    by_name = lapply(sx, function(d) named(d$suffix_family, d$n))
+  ), file.path(OUT, "names/suffix.json"))
+
+  NAMES_META <- list(
+    distinct = nrow(nidx),
+    voters = sum(nidx$total),
+    by_gender = named(GENDERS, sapply(GENDERS, function(g) sum(nidx[gender == g]$total))),
+    years = list(first = min(years), last = max(years), roll = "2012"),
+    normalised = list(before = NAMES_BEFORE, after = nrow(nidx),
+                      folded = nrow(folded), voters_moved = MOVED),
+    series_names = length(series),
+    k_geographic_only = !CFG$k_all_tables
+  )
+  say("first names: %s names, %s voters; %d cohort series, %s of %s cells published",
+      format(nrow(nidx), big.mark = ","), format(sum(nidx$total), big.mark = ","),
+      length(series), format(nrow(ser), big.mark = ","), format(ser_all, big.mark = ","))
+  say("first names: area cells kept %s mun / %s dis; suffix cells %s; %d pre-1900 voters folded into 1900",
+      format(am$kept, big.mark = ","), format(ad$kept, big.mark = ","),
+      format(nrow(nsx), big.mark = ","), pre1900)
+}
+
 # ----------------------------------------------------------------- meta
 write_json_file(list(
   version = CFG$version,
@@ -461,7 +710,7 @@ write_json_file(list(
                 surnames = nrow(idx),
                 surnames_ranked = nrow(idx[voters >= 10])),
   sources = list(
-    voters   = list(label_key = "source.voters",   date = CFG$version, records = NAT_VOTERS),
+    voters   = list(label_key = "source.voters",   date = CFG$source_date, records = NAT_VOTERS),
     book1997 = list(label_key = "source.book1997", citation = "[AUTHOR, TITLE, PUBLISHER, 1997]")),
   geographies = list(
     list(id = "mun", label_key = "geo.municipalities", count = nrow(mun),
@@ -469,6 +718,7 @@ write_json_file(list(
     list(id = "dis", label_key = "geo.districts", count = nrow(dis),
          geojson = "geo/dis.geo.json", tbilisi = "split")),
   suppression = list(k = CFG$k, min_count_for_lq = CFG$min_count_lq),
+  first_names = if (exists("NAMES_META")) NAMES_META else NULL,
   kde = list(grid = G, bandwidth_km = CFG$bandwidth_km, quantisation = "uint8",
              dev = "kde/{bucket}.json"),
   buckets = CFG$buckets,

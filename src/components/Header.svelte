@@ -24,6 +24,7 @@
 
   const TABS = [
     { view: 'surname', key: 'nav.surname' },
+    { view: 'name', key: 'nav.names' },
     { view: 'region', key: 'nav.regions' },
     { view: 'explore', key: 'nav.explore' },
     { view: 'method', key: 'nav.method' },
@@ -31,6 +32,9 @@
 
   function goTab(view) {
     if (view === 'surname') go({ view: 'surname', a: nav.view === 'surname' ? nav.a : (index?.list[0]?.ka ?? '') })
+    // Empty is a real state here: the names view falls back to the commonest
+    // name itself, so the header does not need the names index to open the tab.
+    else if (view === 'name') go({ view: 'name', a: nav.view === 'name' ? nav.a : '' })
     // No area id: the geography tab opens on the whole country and narrows only
     // when the reader picks somewhere. It used to jump to whichever municipality
     // happened to be first in the list, which read as a selection nobody made.

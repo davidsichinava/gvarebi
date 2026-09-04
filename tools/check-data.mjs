@@ -314,5 +314,142 @@ if (omitted.length) {
   console.log(`       ${omitted.length} translation(s) drop a placeholder English supplies: ${omitted.join(', ')}`)
 }
 
+// ---------------------------------------------------------------- first names
+// The names payload is optional: build.R skips the stage when the three input
+// marginals are absent, and so does this. What it must never do is pass by
+// staying silent on a payload that IS there.
+if (existsSync(join(DIR, 'names'))) {
+  console.log('\nfirst names')
+  const nIdxRaw = read('names/index.json')
+  const nat = Object.fromEntries(nIdxRaw.columns.map((c, i) => [c, i]))
+  const names = nIdxRaw.rows.map((r) => ({
+    ka: r[nat.ka], gender: r[nat.gender], total: r[nat.total],
+    rank: r[nat.rank], peak: r[nat.peak_year], bucket: r[nat.bucket],
+  }))
+  const byName = new Map(names.map((n) => [n.ka, n]))
+  const coh = read('names/cohort.json')
+  // The series are sharded on the index bucket, so gather them the way the app
+  // does rather than expecting one file. Reading every bucket here is the point:
+  // the checks below must see all 43,757 series, not the one a reader opened.
+  // One pass builds both the series and the name -> bucket map; reading the 256
+  // shards twice doubled the runtime of this whole script.
+  coh.series = {}
+  const bucketOf = new Map()
+  for (const f of readdirSync(join(DIR, 'names/cohort'))) {
+    const shard = read(`names/cohort/${f}`)
+    const b = f.replace('.json', '')
+    for (const nm of Object.keys(shard)) bucketOf.set(nm, b)
+    Object.assign(coh.series, shard)
+  }
+  const nsuf = read('names/suffix.json')
+  const nArea = { mun: read('names/area/mun.json'), dis: read('names/area/dis.json') }
+  const fm = meta.first_names ?? {}
+  const GENDERS = ['male', 'female', 'unknown']
+
+  ok(names.length > 0, 'index is non-empty', `${names.length} names`)
+  ok(byName.size === names.length, 'names are unique (the route key, as with surnames)',
+    `${names.length - byName.size} duplicate(s)`)
+  ok(names.every((n) => GENDERS.includes(n.gender)), 'every gender is one of the three published states')
+  ok(names.every((n, i) => i === 0 || names[i - 1].total >= n.total), 'index is ordered by total, descending')
+  ok(names.every((n, i) => n.rank === i + 1), 'rank matches position')
+
+  const sum = names.reduce((s, n) => s + n.total, 0)
+  ok(sum === fm.voters, 'index totals reconcile with meta', `${sum} vs ${fm.voters}`)
+  for (const g of GENDERS) {
+    const s = names.filter((n) => n.gender === g).reduce((a, n) => a + n.total, 0)
+    ok(s === fm.by_gender?.[g], `${g} total matches meta`, `${s} vs ${fm.by_gender?.[g]}`)
+  }
+
+  // The roll is from 2012, so no one born after 1994 can be on it, and the nine
+  // pre-1900 birth years were folded into 1900 rather than dropped. Both are
+  // properties of the source; a year outside them means the stage regressed.
+  ok(coh.years.every((y, i) => i === 0 || coh.years[i - 1] < y), 'cohort years are ascending')
+  ok(coh.years[0] >= 1900, 'no cohort earlier than 1900 (pre-1900 folded in)', `first ${coh.years[0]}`)
+  ok(coh.years.at(-1) <= 1994, 'no cohort later than 1994 (2012 roll)', `last ${coh.years.at(-1)}`)
+  ok(names.every((n) => n.peak >= coh.years[0] && n.peak <= coh.years.at(-1)),
+    'every peak year falls inside the cohort range')
+
+  const cohSum = GENDERS.reduce((s, g) =>
+    s + Object.values(coh.totals[g] ?? {}).reduce((a, b) => a + b, 0), 0)
+  ok(cohSum === fm.voters, 'cohort denominators reconcile with the index', `${cohSum} vs ${fm.voters}`)
+
+  const series = Object.entries(coh.series)
+  // Buckets are two-digit hex strings, not numbers — the same convention the
+  // surname index uses, and the filename of the shard.
+  ok(names.every((n) => typeof n.bucket === 'string' && /^[0-9a-f]{2}$/.test(n.bucket)),
+    'every name carries a cohort bucket')
+  ok(series.every(([nm]) => byName.get(nm).bucket === bucketOf.get(nm)),
+    'every series sits in the bucket its index row names')
+  ok(series.length === fm.series_names, 'series count matches meta', `${series.length} vs ${fm.series_names}`)
+  ok(series.every(([, s]) => Array.isArray(s.y) && Array.isArray(s.n)),
+    'series years and counts are arrays, never bare scalars')
+  ok(series.every(([, s]) => s.y.length === s.n.length), 'every series has matching year and count arrays')
+  ok(series.every(([nm]) => byName.has(nm)), 'every series names a name in the index')
+  ok(!fm.k_geographic_only || series.length === names.length,
+    'every name has a cohort series (none dropped)', `${series.length} of ${names.length}`)
+  ok(series.every(([, s]) => s.y.every((y, i) => i === 0 || s.y[i - 1] < y)),
+    'series years are ascending within each name')
+
+  // Privacy. k guards the GEOGRAPHIC marginal and only that one. What protects
+  // people is not k on every table but that the marginals are never crossed:
+  // name x year carries no place, name x area carries no year. So the assertion
+  // differs by table - area cells must clear k, the cohort must be complete.
+  if (fm.k_geographic_only) {
+    const cells = series.reduce((a, [, sr]) => a + sr.n.reduce((x, y) => x + y, 0), 0)
+    ok(cells === fm.voters, 'cohort series are complete, nothing withheld', `${cells} vs ${fm.voters}`)
+  } else {
+    const cohLeaks = series.filter(([, sr]) => sr.n.some((v) => v < k)).length
+    ok(cohLeaks === 0, `no cohort cell below k=${k}`, cohLeaks ? `${cohLeaks} name(s) leak` : '')
+  }
+  // The invariant the design rests on: nothing published joins a birth year to
+  // a place. If a later stage ever emits such a cell, this is what catches it.
+  const crossed = series.some(([, sr]) => 'area' in sr) ||
+    Object.values(nArea.dis).some((m) => Object.values(m).some((v) => typeof v === 'object'))
+  ok(!crossed, 'no published cell joins a birth year to an area')
+
+  for (const geo of ['mun', 'dis']) {
+    const ids = new Set(areas[geo].map((a) => a.id))
+    const entries = Object.entries(nArea[geo])
+    const cells = entries.flatMap(([, m]) => Object.values(m))
+    ok(entries.every(([nm]) => byName.has(nm)), `${geo}: every mapped name is in the index`)
+    ok(entries.every(([, m]) => Object.keys(m).every((a) => ids.has(Number(a)))),
+      `${geo}: every area id exists`)
+    ok(cells.every((v) => v >= k), `${geo}: no area cell below k=${k}`)
+    // A name cannot out-number the electorate it sits in.
+    const voters = Object.fromEntries(areas[geo].map((a) => [a.id, a.voters]))
+    const over = entries.flatMap(([nm, m]) =>
+      Object.entries(m).filter(([a, v]) => v > voters[a]).map(([a]) => `${nm}@${a}`))
+    ok(over.length === 0, `${geo}: no name exceeds its area's electorate`, over.slice(0, 3).join(', '))
+  }
+
+  ok(Array.isArray(nsuf.families) && nsuf.families.length > 0, 'suffix cross-tab lists families',
+    `${nsuf.families?.length} families`)
+  ok(!nsuf.families.includes('NA'), '"NA" was mapped to other, not published as a family')
+  const famSet = new Set(nsuf.families)
+  const sxEntries = Object.entries(nsuf.by_name)
+  ok(sxEntries.every(([nm]) => byName.has(nm)), 'every cross-tabbed name is in the index')
+  ok(sxEntries.every(([, m]) => Object.keys(m).every((f) => famSet.has(f))),
+    'every cross-tab family is a declared family')
+  // Not a geographic table, so under the geography-only policy it carries no k.
+  // The cross-tab pairs a first name with a surname FAMILY, one of nineteen -
+  // it narrows nobody to a place, and the surname index already publishes every
+  // surname singleton by name.
+  if (fm.k_geographic_only) {
+    const sxSum = sxEntries.reduce((a2, [, m]) => a2 + Object.values(m).reduce((x, y) => x + y, 0), 0)
+    ok(sxSum === fm.voters, 'suffix cross-tab is complete', `${sxSum} vs ${fm.voters}`)
+  } else {
+    ok(sxEntries.flatMap(([, m]) => Object.values(m)).every((v) => v >= k),
+      `no suffix cross-tab cell below k=${k}`)
+  }
+
+  console.log(`       ${names.length} names · ${series.length} series · ` +
+    `${Object.keys(nArea.mun).length} mapped by mun, ${Object.keys(nArea.dis).length} by dis · ` +
+    `${sxEntries.length} cross-tabbed`)
+  const mapped = Object.keys(nArea.dis).length
+  console.log(`       ${(100 * mapped / names.length).toFixed(1)}% of names survive k=${k} in at least one district`)
+} else {
+  console.log('\nfirst names: no payload, stage skipped')
+}
+
 console.log(`\n${failures ? `${failures} FAILURE(S)` : 'all checks passed'}\n`)
 process.exit(failures ? 1 : 0)
