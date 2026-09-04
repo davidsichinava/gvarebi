@@ -1,7 +1,7 @@
 <script>
   import { nav, go } from '../lib/state.svelte.js'
   import { t, name as areaName } from '../lib/i18n.svelte.js'
-  import { getProfiles, getSuffix } from '../lib/data.js'
+  import { getProfiles, getSuffix, getNameProfiles } from '../lib/data.js'
   import { suffixMix, rate } from '../lib/metrics.js'
   import { familyLabelFull } from '../lib/suffix.js'
   import { num, pct, times } from '../lib/format.js'
@@ -32,6 +32,41 @@
 
   let suffixData = $state(null)
   $effect(() => { getSuffix().then((d) => (suffixData = d)) })
+
+  // First names for the same area, from their own precomputed profiles.
+  let nameProfiles = $state(null)
+  $effect(() => {
+    const want = geo
+    nameProfiles = null
+    getNameProfiles(want).then((p) => { if (geo === want) nameProfiles = p })
+  })
+
+  // Rows shaped like the surname ones so a single table renders either. The
+  // national fallback has no quotient: measured against the country, a national
+  // share is a share of itself.
+  let nameProfile = $derived.by(() => {
+    const hydrate = ([ka, count, quotient]) => ({
+      ka, count, rate: rate(count, nationwide ? meta.totals.voters : area.voters),
+      lq: quotient ?? null,
+    })
+    if (nationwide) {
+      const fn = meta.first_names
+      if (!fn) return null
+      return { common: (fn.top ?? []).map(hydrate), distinctive: [],
+               distinct: fn.distinct, male: fn.distinct_male, female: fn.distinct_female,
+               top10: fn.top10 }
+    }
+    const raw = nameProfiles && area ? nameProfiles[area.id] : null
+    if (!raw) return null
+    return { common: (raw.common ?? []).map(hydrate),
+             distinctive: (raw.distinctive ?? []).map(hydrate),
+             distinct: raw.distinct, male: raw.male, female: raw.female, top10: raw.top10 }
+  })
+  let nameTop10Share = $derived(
+    !nameProfile ? null
+      : (nationwide ? meta.totals.voters : area?.voters) > 0
+        ? nameProfile.top10 / (nationwide ? meta.totals.voters : area.voters)
+        : null)
 
   let profile = $derived.by(() => {
     const raw = profiles && area ? profiles[area.id] : null
@@ -94,7 +129,16 @@
   // Nationwide has no distinctive list, so a reader arriving with that tab
   // already selected would meet an empty table instead of the country's top
   // surnames. The stored choice is kept for when they pick somewhere again.
-  let activeTab = $derived(nationwide ? 'common' : tab)
+  const NAME_TABS = ['name_common', 'name_distinctive']
+  let activeTab = $derived.by(() => {
+    if (!nationwide) return tab
+    // Nationwide has no distinctive list of either kind, but a reader sitting on
+    // the first-name tab should stay on first names rather than be thrown back
+    // to surnames.
+    if (tab === 'name_distinctive' || tab === 'name_common') return 'name_common'
+    return 'common'
+  })
+  let showingNames = $derived(NAME_TABS.includes(activeTab))
 
   const areaByCode = $derived(new Map(list.map((a) => [a.code, a])))
   let mapRows = $derived(list.map((a) => ({ area: a, suppressed: false, value: a.id === area?.id ? 1 : 0 })))
@@ -123,6 +167,17 @@
       {#if SHOW_1997}
         <div class="card pad"><div class="lbl">{t('region.since_1997')}</div><div class="big num" class:down={rollChange < 0}>{pct(rollChange)}</div></div>
       {/if}
+    </div>
+
+    <div class="card pad">
+      <div class="lbl">{t('region.names_here')}</div>
+      <div class="tiles namtiles">
+        <div><div class="lbl">{t('region.distinct_first_names')}</div><div class="big num">{num(nameProfile?.distinct)}</div></div>
+        <div><div class="lbl">{t('region.distinct_male')}</div><div class="big num">{num(nameProfile?.male)}</div></div>
+        <div><div class="lbl">{t('region.distinct_female')}</div><div class="big num">{num(nameProfile?.female)}</div></div>
+        <div><div class="lbl">{t('region.names_top10_share')}</div><div class="big num">{nameTop10Share == null ? '—' : (nameTop10Share * 100).toFixed(1) + '%'}</div></div>
+      </div>
+      <p class="note tiny mut">{t('region.names_counts_note', { k: meta.suppression.k })}</p>
     </div>
 
     <div class="card pad">
@@ -169,15 +224,48 @@
           <button class:on={activeTab === 'movers'} onclick={() => (tab = 'movers')}>{t('region.movers')}</button>
         {/if}
       {/if}
+      <button class:on={activeTab === 'name_common'} onclick={() => (tab = 'name_common')}>{t('region.names_common')}</button>
+      {#if !nationwide}
+        <button class:on={activeTab === 'name_distinctive'} onclick={() => (tab = 'name_distinctive')}>{t('region.names_distinctive')}</button>
+      {/if}
     </div>
 
     <p class="note tiny mut">
-      {activeTab === 'common' ? t('region.most_common_note')
+      {activeTab === 'name_common' ? t('region.names_common_note')
+        : activeTab === 'name_distinctive' ? t('region.names_distinctive_note')
+        : activeTab === 'common' ? t('region.most_common_note')
         : activeTab === 'distinctive' ? t('region.most_distinctive_note')
         : t('region.movers_note')}
     </p>
 
-    {#if !shown}
+    {#if showingNames}
+      {#if !nameProfile}
+        <p class="tiny mut">…</p>
+      {:else}
+        <table>
+          <thead>
+            <tr>
+              <th style="width:20px"></th>
+              <th>{t('region.first_name')}</th>
+              <th class="r">{t('table.voters')}</th>
+              <th class="r">{t('table.per_1000')}</th>
+              <th class="r">{t('table.concentration')}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each (activeTab === 'name_common' ? nameProfile.common : nameProfile.distinctive).slice(0, 20) as r, i (r.ka)}
+              <tr class="link" onclick={() => go({ view: 'name', a: r.ka })}>
+                <td class="tiny mut">{i + 1}</td>
+                <td><span class="ka">{r.ka}</span></td>
+                <td class="r num">{num(r.count)}</td>
+                <td class="r num">{num(r.rate, 1)}</td>
+                <td class="r num"><b>{r.lq == null ? '—' : times(r.lq)}</b></td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      {/if}
+    {:else if !shown}
       <p class="tiny mut">…</p>
     {:else}
       <table>
@@ -230,6 +318,10 @@
   .hint { position: absolute; bottom: 8px; left: 8px; background: rgba(255,253,250,.92);
     padding: 4px 7px; border-radius: 2px; z-index: 4; }
   .tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  /* Four small counts, not two large ones: these sit inside a card rather than
+     being cards themselves, so they read as a group. */
+  .namtiles { grid-template-columns: 1fr 1fr; margin-top: 8px; }
+  .namtiles .big { font-size: 16px; }
   .big { font-size: 20px; font-weight: 600; margin-top: 2px; }
   .big.down { color: var(--warm); }
   .bars { display: flex; flex-direction: column; gap: 3px; margin-top: 8px; }
@@ -262,6 +354,12 @@
   .ka { font-size: 13px; }
   @media (max-width: 980px) {
     .wrap { display: flex; flex-direction: column; overflow-y: auto; }
+    /* Four tabs do not fit 375px, and without a scroller the first-name ones
+       are simply unreachable — the same way the explore sub-tabs hid the suffix
+       map. Same treatment as the header nav. */
+    .tabs { overflow-x: auto; scrollbar-width: none; }
+    .tabs::-webkit-scrollbar { display: none; }
+    .tabs button { flex: 0 0 auto; white-space: nowrap; }
     .side, .main { overflow: visible; min-height: auto; }
     .tiles { grid-template-columns: 1fr 1fr; }
   }

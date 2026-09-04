@@ -35,6 +35,8 @@ export const getNameCohort = () => json("names/cohort.json")
  *  opening one name does not pull the other forty-three thousand. */
 export const getNameCohortBucket = (b) => json(`names/cohort/${b}.json`)
 export const getNameArea = (geo) => json(`names/area/${geo}.json`)
+/** Per-area first-name rankings, precomputed like the surname profiles. */
+export const getNameProfiles = (geo) => json(`names/profiles/${geo}.json`)
 export const getNameSuffix = () => json("names/suffix.json")
 
 let namesPromise = null

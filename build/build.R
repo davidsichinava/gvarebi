@@ -664,12 +664,70 @@ if (!have_names) {
     a <- a[n >= CFG$k & area_id %in% area_dt$area_id]
     setorder(a, first_name, area_id)
     s <- split(a, by = "first_name", keep.by = FALSE)
-    list(map = lapply(s, function(d) named(d$area_id, d$n)), kept = nrow(a))
+    list(map = lapply(s, function(d) named(d$area_id, d$n)), kept = nrow(a), cells = a)
   }
   am <- name_area("mun_id", mun)
   ad <- name_area("dis_id", dis)
   write_json_file(am$map, file.path(OUT, "names/area/mun.json"))
   write_json_file(ad$map, file.path(OUT, "names/area/dis.json"))
+
+  # -- per-area name profiles -------------------------------------------------
+  # The same shape as the surname profiles, and for the same reason: the region
+  # view would otherwise fetch the whole name index and walk 43,757 names once
+  # per area to find the commonest and the most over-represented.
+  #
+  # Built from the PUBLISHED cells, exactly as the surname profiles are, so a
+  # profile can never surface a count that suppression withheld. That makes
+  # `distinct` a count of names with at least k bearers here, not a true count of
+  # distinct names — the surname card already means the same thing, and the two
+  # sitting side by side have to be counting the same way.
+  NAMES_VOTERS <- sum(nidx$total)
+  gender_of <- setNames(nidx$gender, nidx$first_name)
+  nat_of <- setNames(nidx$total, nidx$first_name)
+
+  name_profiles <- function(cells, area_dt) {
+    d <- copy(cells)
+    d[, nat := nat_of[first_name]]
+    d[, gender := gender_of[first_name]]
+    d <- merge(d, area_dt[, .(area_id, av = voters_total)], by = "area_id")
+    d[, lq := fifelse(n >= CFG$min_count_lq & av > 0,
+                      (n / av) / (nat / NAMES_VOTERS), NA_real_)]
+
+    setorder(d, area_id, -n)
+    common <- d[, .(rows = list(lapply(seq_len(min(.N, TOPN)),
+                      function(i) list(first_name[i], n[i])))), by = area_id]
+    counts <- d[, .(distinct = .N,
+                    male = sum(gender == "male"),
+                    female = sum(gender == "female")), by = area_id]
+    top10 <- d[, .(top10 = sum(utils::head(n, 10L))), by = area_id]
+
+    q <- d[!is.na(lq)]
+    # Same tie-break as the surname side: a name found only here has nat == n, so
+    # its quotient collapses to a constant and ordering by quotient alone picks
+    # arbitrarily among everything tied at the ceiling.
+    setorder(q, area_id, -lq, -n)
+    distinctive <- q[, .(rows = list(lapply(seq_len(min(.N, TOPN)),
+                      function(i) list(first_name[i], n[i], round(lq[i], 3))))), by = area_id]
+
+    out <- list()
+    for (a in area_dt$area_id) {
+      ck <- common[area_id == a]; qk <- distinctive[area_id == a]
+      cn <- counts[area_id == a]; tk <- top10[area_id == a]
+      out[[as.character(a)]] <- list(
+        distinct    = if (nrow(cn)) cn$distinct else 0L,
+        male        = if (nrow(cn)) cn$male else 0L,
+        female      = if (nrow(cn)) cn$female else 0L,
+        top10       = if (nrow(tk)) tk$top10 else 0L,
+        common      = if (nrow(ck)) ck$rows[[1]] else list(),
+        distinctive = if (nrow(qk)) qk$rows[[1]] else list())
+    }
+    out
+  }
+
+  dir.create(file.path(OUT, "names/profiles"), showWarnings = FALSE, recursive = TRUE)
+  write_json_file(name_profiles(am$cells, mun), file.path(OUT, "names/profiles/mun.json"))
+  write_json_file(name_profiles(ad$cells, dis), file.path(OUT, "names/profiles/dis.json"))
+  say("first names: profiles, top %d per area, both levels", TOPN)
 
   # -- first name x surname suffix -------------------------------------------
   # Whether an -ia/-ua/-ava family draws on a different first-name repertoire
@@ -694,6 +752,14 @@ if (!have_names) {
     years = list(first = min(years), last = max(years), roll = "2012"),
     normalised = list(before = NAMES_BEFORE, after = nrow(nidx),
                       folded = nrow(folded), voters_moved = MOVED),
+    # The national counterparts of a per-area name profile. Carried in meta so
+    # the region view can render its nationwide state without fetching the whole
+    # two-megabyte name index for four numbers and a list of twenty-five.
+    distinct_male = nrow(nidx[gender == "male"]),
+    distinct_female = nrow(nidx[gender == "female"]),
+    top10 = sum(utils::head(nidx$total, 10L)),
+    top = .mapply(function(...) unname(list(...)),
+                  list(utils::head(nidx$first_name, 25L), utils::head(nidx$total, 25L)), NULL),
     series_names = length(series),
     k_geographic_only = !CFG$k_all_tables
   )

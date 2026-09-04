@@ -214,5 +214,16 @@
   "method.names_source": "The distribution of first names is based on the 2012 electoral list. Sex comes from public registry data processed by Zviad Kikvidze (https://github.com/zkikvidze/Georgian-Names-By-Gender), matched to each name — it is not a field in the roll itself, so it describes the name rather than the person.",
   "method.names_normalise": "Through an administrative inconsistency the same name is often recorded with or without the nominative ending — დავითი and დავით, for instance. The data is normalised to fold these together, but only where the other form actually occurs and the sex matches.",
   "method.names_cohort": "The cohort curve shows the share of people carrying a name among those of the same sex born in the same year and registered on the electoral list. Years before 1920 are not included, too few records to be meaningful. The data reflects the position as of 2012.",
-  "method.names_suppression": "On the maps, names with fewer than {k} bearers in an area are withheld."
+  "method.names_suppression": "On the maps, names with fewer than {k} bearers in an area are withheld.",
+  "region.first_name": "First name",
+  "region.names_common": "Most common first names",
+  "region.names_distinctive": "Most distinctive first names",
+  "region.names_common_note": "By raw count on the voters list",
+  "region.names_distinctive_note": "Most over-represented compared with the national share",
+  "region.names_here": "First names here",
+  "region.distinct_first_names": "Distinct first names",
+  "region.distinct_male": "Male names",
+  "region.distinct_female": "Female names",
+  "region.names_top10_share": "Top-10 share",
+  "region.names_counts_note": "Counts names with at least {k} bearers here, so rarer names are not included."
 }
