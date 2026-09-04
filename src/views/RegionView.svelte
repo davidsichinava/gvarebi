@@ -167,17 +167,9 @@
       {#if SHOW_1997}
         <div class="card pad"><div class="lbl">{t('region.since_1997')}</div><div class="big num" class:down={rollChange < 0}>{pct(rollChange)}</div></div>
       {/if}
-    </div>
-
-    <div class="card pad">
-      <div class="lbl">{t('region.names_here')}</div>
-      <div class="tiles namtiles">
-        <div><div class="lbl">{t('region.distinct_first_names')}</div><div class="big num">{num(nameProfile?.distinct)}</div></div>
-        <div><div class="lbl">{t('region.distinct_male')}</div><div class="big num">{num(nameProfile?.male)}</div></div>
-        <div><div class="lbl">{t('region.distinct_female')}</div><div class="big num">{num(nameProfile?.female)}</div></div>
-        <div><div class="lbl">{t('region.names_top10_share')}</div><div class="big num">{nameTop10Share == null ? '—' : (nameTop10Share * 100).toFixed(1) + '%'}</div></div>
-      </div>
-      <p class="note tiny mut">{t('region.names_counts_note', { k: meta.suppression.k })}</p>
+      <div class="card pad"><div class="lbl">{t('region.distinct_male')}</div><div class="big num">{num(nameProfile?.male)}</div></div>
+      <div class="card pad"><div class="lbl">{t('region.distinct_female')}</div><div class="big num">{num(nameProfile?.female)}</div></div>
+      <div class="card pad"><div class="lbl">{t('region.names_top10_share')}</div><div class="big num">{nameTop10Share == null ? '—' : (nameTop10Share * 100).toFixed(1) + '%'}</div></div>
     </div>
 
     <div class="card pad">
@@ -318,10 +310,6 @@
   .hint { position: absolute; bottom: 8px; left: 8px; background: rgba(255,253,250,.92);
     padding: 4px 7px; border-radius: 2px; z-index: 4; }
   .tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-  /* Four small counts, not two large ones: these sit inside a card rather than
-     being cards themselves, so they read as a group. */
-  .namtiles { grid-template-columns: 1fr 1fr; margin-top: 8px; }
-  .namtiles .big { font-size: 16px; }
   .big { font-size: 20px; font-weight: 600; margin-top: 2px; }
   .big.down { color: var(--warm); }
   .bars { display: flex; flex-direction: column; gap: 3px; margin-top: 8px; }

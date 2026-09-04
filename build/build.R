@@ -311,11 +311,15 @@ say("agg: %d buckets", length(unique(idx$bucket)))
 # made the tab slow. None of it depends on anything the reader does, so it
 # belongs here.
 #
-# Built from the PUBLISHED counts, not the raw ones, so a profile can never
-# surface a cell that suppression withheld.
+# The NAMED lists are built from the published counts, so a profile can never
+# surface a cell that suppression withheld. The plain counts are not: a count of
+# distinct surnames in an area is one number aggregated over thousands of people
+# and identifies nobody, whereas deriving it from the published cells alone would
+# report a small area as having a few hundred surnames when it has thousands.
+# The two are different kinds of fact and take different inputs.
 TOPN <- 25L
 
-profiles_for <- function(keep, area_dt) {
+profiles_for <- function(keep, raw, area_dt) {
   d <- merge(keep, idx[, .(surname, nat = voters)], by = "surname")
   d <- merge(d, area_dt[, .(area_id, av = voters_total)], by = "area_id")
   # A quotient needs a denominator; an area with no electorate has none.
@@ -324,7 +328,7 @@ profiles_for <- function(keep, area_dt) {
   setorder(d, area_id, -n)
   common <- d[, .(rows = list(lapply(seq_len(min(.N, TOPN)),
                     function(i) list(surname[i], n[i])))), by = area_id]
-  distinct_n <- d[, .(distinct = .N), by = area_id]
+  distinct_n <- raw[, .(distinct = .N), by = area_id]
   q <- d[!is.na(lq)]
   # Ties at the ceiling are the norm, not the exception. A surname found ONLY in
   # one area has nat == n, so its quotient collapses to NAT_VOTERS / area voters
@@ -334,7 +338,8 @@ profiles_for <- function(keep, area_dt) {
   setorder(q, area_id, -lq, -n)
   distinctive <- q[, .(rows = list(lapply(seq_len(min(.N, TOPN)),
                     function(i) list(surname[i], n[i], round(lq[i], 3))))), by = area_id]
-  top10 <- d[, .(top10 = sum(utils::head(n, 10L))), by = area_id]
+  r10 <- copy(raw); setorder(r10, area_id, -n)
+  top10 <- r10[, .(top10 = sum(utils::head(n, 10L))), by = area_id]
 
   out <- list()
   for (a in area_dt$area_id) {
@@ -349,8 +354,8 @@ profiles_for <- function(keep, area_dt) {
 }
 
 dir.create(file.path(OUT, "profiles"), showWarnings = FALSE, recursive = TRUE)
-write_json_file(profiles_for(s_mun$keep, mun), file.path(OUT, "profiles", "mun.json"))
-write_json_file(profiles_for(s_dis$keep, dis), file.path(OUT, "profiles", "dis.json"))
+write_json_file(profiles_for(s_mun$keep, agg_mun, mun), file.path(OUT, "profiles", "mun.json"))
+write_json_file(profiles_for(s_dis$keep, agg_dis, dis), file.path(OUT, "profiles", "dis.json"))
 say("profiles: top %d per area, both levels", TOPN)
 
 # ----------------------------------------------------------------- suffixes
@@ -659,12 +664,14 @@ if (!have_names) {
   # -- geography -------------------------------------------------------------
   nare <- merge(nare, precincts[, .(precinct_id, mun_id, dis_id)], by = "precinct_id")
   name_area <- function(level_col, area_dt) {
-    a <- nare[, .(n = sum(count)), by = c("first_name", level_col)]
-    setnames(a, level_col, "area_id")
-    a <- a[n >= CFG$k & area_id %in% area_dt$area_id]
+    a_raw <- nare[, .(n = sum(count)), by = c("first_name", level_col)]
+    setnames(a_raw, level_col, "area_id")
+    a_raw <- a_raw[area_id %in% area_dt$area_id]
+    a <- a_raw[n >= CFG$k]
     setorder(a, first_name, area_id)
     s <- split(a, by = "first_name", keep.by = FALSE)
-    list(map = lapply(s, function(d) named(d$area_id, d$n)), kept = nrow(a), cells = a)
+    list(map = lapply(s, function(d) named(d$area_id, d$n)), kept = nrow(a),
+         cells = a, raw = a_raw)
   }
   am <- name_area("mun_id", mun)
   ad <- name_area("dis_id", dis)
@@ -676,16 +683,17 @@ if (!have_names) {
   # view would otherwise fetch the whole name index and walk 43,757 names once
   # per area to find the commonest and the most over-represented.
   #
-  # Built from the PUBLISHED cells, exactly as the surname profiles are, so a
-  # profile can never surface a count that suppression withheld. That makes
-  # `distinct` a count of names with at least k bearers here, not a true count of
-  # distinct names — the surname card already means the same thing, and the two
-  # sitting side by side have to be counting the same way.
+  # The named lists come from the PUBLISHED cells, so a profile can never surface
+  # a count that suppression withheld. The plain counts come from the raw ones:
+  # "how many distinct male names are on the roll here" is a single number over
+  # thousands of people and discloses nobody, while counting only published cells
+  # would report a few hundred where there are thousands. The surname profiles
+  # draw the same distinction, so the cards beside these count the same way.
   NAMES_VOTERS <- sum(nidx$total)
   gender_of <- setNames(nidx$gender, nidx$first_name)
   nat_of <- setNames(nidx$total, nidx$first_name)
 
-  name_profiles <- function(cells, area_dt) {
+  name_profiles <- function(cells, raw, area_dt) {
     d <- copy(cells)
     d[, nat := nat_of[first_name]]
     d[, gender := gender_of[first_name]]
@@ -696,10 +704,13 @@ if (!have_names) {
     setorder(d, area_id, -n)
     common <- d[, .(rows = list(lapply(seq_len(min(.N, TOPN)),
                       function(i) list(first_name[i], n[i])))), by = area_id]
-    counts <- d[, .(distinct = .N,
-                    male = sum(gender == "male"),
-                    female = sum(gender == "female")), by = area_id]
-    top10 <- d[, .(top10 = sum(utils::head(n, 10L))), by = area_id]
+    rw <- copy(raw)
+    rw[, gender := gender_of[first_name]]
+    counts <- rw[, .(distinct = .N,
+                     male = sum(gender == "male"),
+                     female = sum(gender == "female")), by = area_id]
+    setorder(rw, area_id, -n)
+    top10 <- rw[, .(top10 = sum(utils::head(n, 10L))), by = area_id]
 
     q <- d[!is.na(lq)]
     # Same tie-break as the surname side: a name found only here has nat == n, so
@@ -725,8 +736,8 @@ if (!have_names) {
   }
 
   dir.create(file.path(OUT, "names/profiles"), showWarnings = FALSE, recursive = TRUE)
-  write_json_file(name_profiles(am$cells, mun), file.path(OUT, "names/profiles/mun.json"))
-  write_json_file(name_profiles(ad$cells, dis), file.path(OUT, "names/profiles/dis.json"))
+  write_json_file(name_profiles(am$cells, am$raw, mun), file.path(OUT, "names/profiles/mun.json"))
+  write_json_file(name_profiles(ad$cells, ad$raw, dis), file.path(OUT, "names/profiles/dis.json"))
   say("first names: profiles, top %d per area, both levels", TOPN)
 
   # -- first name x surname suffix -------------------------------------------

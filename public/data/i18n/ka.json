@@ -220,10 +220,7 @@
   "region.names_distinctive": "დამახასიათებელი სახელები",
   "region.names_common_note": "ამომრჩეველთა სიაში რაოდენობის მიხედვით",
   "region.names_distinctive_note": "ეროვნულ წილთან შედარებით, უფრო მეტად წარმოდგენილი",
-  "region.names_here": "სახელები აქ",
-  "region.distinct_first_names": "განსხვავებული სახელები",
-  "region.distinct_male": "მამრობითი",
-  "region.distinct_female": "მდედრობითი",
-  "region.names_top10_share": "10 ყველაზე გავრცელებული სახელის წილი",
-  "region.names_counts_note": "ითვლის სახელებს, რომელთაც აქ სულ მცირე {k} მატარებელი ჰყავს; უფრო იშვიათი სახელები არ შედის."
+  "region.distinct_male": "განსხვავებული მამრობითი სახელები",
+  "region.distinct_female": "განსხვავებული მდედრობითი სახელები",
+  "region.names_top10_share": "10 ყველაზე გავრცელებული სახელის წილი"
 }

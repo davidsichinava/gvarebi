@@ -220,10 +220,7 @@
   "region.names_distinctive": "Most distinctive first names",
   "region.names_common_note": "By raw count on the voters list",
   "region.names_distinctive_note": "Most over-represented compared with the national share",
-  "region.names_here": "First names here",
-  "region.distinct_first_names": "Distinct first names",
-  "region.distinct_male": "Male names",
-  "region.distinct_female": "Female names",
-  "region.names_top10_share": "Top-10 share",
-  "region.names_counts_note": "Counts names with at least {k} bearers here, so rarer names are not included."
+  "region.distinct_male": "Distinct male names",
+  "region.distinct_female": "Distinct female names",
+  "region.names_top10_share": "Top-10 first names"
 }
